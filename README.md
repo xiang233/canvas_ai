@@ -1,6 +1,7 @@
 # Canvas Student Agent
 
 **Demo**: [https://markso.ng/demo/canvas](https://markso.ng/demo/canvas)
+**Cloudflare version**: [Github](https://github.com/xiang233/cf_ai_canvas_agent/)
 
 An OpenAI-powered ReAct Agent for Canvas LMS companion tailored for student accounts. The project ships with a conversational CLI, a secured WebSocket service for machine-to-machine integrations, and a bulk Canvas LMS file downloader that can populate OpenAI Vector Stores.
 
