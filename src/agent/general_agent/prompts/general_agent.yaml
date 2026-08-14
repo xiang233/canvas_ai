@@ -119,8 +119,8 @@ system_prompt: |-
   Now Begin!
 
 task_instruction: |-
-  You have one question to answer. It is paramount that you provide a correct answer. Give it all you can: I know for a fact that you have access to all the relevant tools and team members to solve it and find the correct answer (the answer does exist). 
-  Failure or 'I cannot answer' or 'None found' will not be tolerated, success will be rewarded. 
+  You have one question to answer. It is paramount that you provide a correct answer. Give it all you can, and use the tools available to you.
+  If the course materials do not contain the answer, say so explicitly. You may then add relevant general knowledge, but you must clearly mark which parts come from course materials and which come from your own knowledge. Stating that something is not in the materials is a valid and correct answer.
 
   Here is the task:
   {{task}}
