@@ -1,5 +1,6 @@
 import logging
 import json
+import os
 from io import StringIO
 from enum import IntEnum
 from typing import List, Optional
@@ -63,6 +64,10 @@ class AgentLogger(logging.Logger, metaclass=Singleton):
         self.addHandler(console_handler)
 
         # Add a file handler for logging to the file
+        # workdir/ is gitignored, so the log directory may not exist on a fresh clone
+        log_dir = os.path.dirname(log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
         file_handler = logging.FileHandler(
             log_path, mode="a", encoding="utf-8"
         )  # 'a' mode appends to the file, with UTF-8 encoding
