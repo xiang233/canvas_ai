@@ -5,25 +5,42 @@ Canvas LMS API 工具集 - 学生权限版本
 使用 os.environ 获取 CANVAS_ACCESS_TOKEN 和 CANVAS_URL
 """
 
+import asyncio
 import os
+import random
 import aiohttp
 from typing import Optional, List, Dict, Any
 from src.tools import AsyncTool, ToolResult
 from src.registry import TOOL
 
+# 只对瞬时故障重试：限流和服务端错误。4xx（401/403/404 等）重试无意义
+RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+
+
+def _env_int(name: str, default: int) -> int:
+    """读取整数环境变量，非法值回落到默认值"""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
 
 class CanvasAPIBase(AsyncTool):
     """Canvas API 基类，处理通用的API调用逻辑"""
-    
+
     def __init__(self):
         super().__init__()
         self.canvas_url = os.environ.get("CANVAS_URL", "https://canvas.instructure.com")
         self.access_token = os.environ.get("CANVAS_ACCESS_TOKEN")
+        self.max_retries = _env_int("CANVAS_MAX_RETRIES", 3)
+        self.timeout = _env_int("CANVAS_TIMEOUT", 30)
         if "http://" in self.canvas_url:
             self.canvas_url = self.canvas_url.replace("http://", "https://")
         if "http" not in self.canvas_url:
             self.canvas_url = "https://" + self.canvas_url
-        
+        # 去掉结尾斜杠，否则 base_url 会拼出 //api/v1
+        self.canvas_url = self.canvas_url.rstrip("/")
+
         if not self.access_token:
             raise ValueError("未找到 CANVAS_ACCESS_TOKEN 环境变量")
         
@@ -33,35 +50,66 @@ class CanvasAPIBase(AsyncTool):
             "Content-Type": "application/json"
         }
     
+    def _backoff_delay(self, attempt: int, retry_after: Optional[str] = None) -> float:
+        """指数退避 + 随机抖动。抖动是必需的：工具调用是并发的，
+        没有抖动的话同时被限流的几个请求会在同一时刻一起重试"""
+        if retry_after:
+            try:
+                return min(float(retry_after), 30.0)
+            except ValueError:
+                pass
+        return min(0.5 * (2 ** attempt), 8.0) + random.uniform(0, 0.3)
+
     async def _make_request(
-        self, 
-        method: str, 
-        endpoint: str, 
-        params: Optional[Dict] = None, 
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict] = None,
         data: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        """发送API请求的通用方法"""
+        """发送API请求的通用方法，对瞬时故障做指数退避重试"""
         url = f"{self.base_url}/{endpoint}"
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.request(
-                    method=method,
-                    url=url,
-                    headers=self.headers,
-                    params=params,
-                    json=data,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    elif response.status == 404:
-                        return {"error": "Resource not found"}
-                    else:
+        last_error = "unknown error"
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.request(
+                        method=method,
+                        url=url,
+                        headers=self.headers,
+                        params=params,
+                        json=data,
+                        timeout=aiohttp.ClientTimeout(total=self.timeout)
+                    ) as response:
+                        if response.status == 200:
+                            return await response.json()
+                        elif response.status == 404:
+                            return {"error": "Resource not found"}
+
                         error_text = await response.text()
-                        return {"error": f"API Request Failed (Status Code {response.status}): {error_text}"}
-        except Exception as e:
-            return {"error": f"Request Error: {str(e)}"}
+                        last_error = f"API Request Failed (Status Code {response.status}): {error_text}"
+
+                        if response.status in RETRYABLE_STATUSES and attempt < self.max_retries:
+                            await asyncio.sleep(
+                                self._backoff_delay(attempt, response.headers.get("Retry-After"))
+                            )
+                            continue
+                        return {"error": last_error}
+
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                # 网络抖动/超时，可重试
+                last_error = f"Request Error: {type(e).__name__}: {e}"
+                if attempt < self.max_retries:
+                    await asyncio.sleep(self._backoff_delay(attempt))
+                    continue
+                return {"error": last_error}
+
+            except Exception as e:
+                # 非网络异常，重试无意义
+                return {"error": f"Request Error: {str(e)}"}
+
+        return {"error": last_error}
 
 
 @TOOL.register_module(name="canvas_list_courses", force=True)

@@ -9,6 +9,8 @@ LLM_PROVIDER=azure
 # Agent 运行参数（eval 扫参用）
 AGENT_MODEL_ID=gpt-4.1-mini
 AGENT_MAX_STEPS=15
+# 0 = 关闭周期性 re-planning。开启需要先在 general_agent.yaml 里补 planning 模板，
+# 否则 _generate_planning_step() 会抛 KeyError: 'planning'
 AGENT_PLANNING_INTERVAL=0
 
 # ---- Azure OpenAI Config ----
@@ -28,9 +30,15 @@ OPENAI_API_KEY=your_openai_api_key_here
 LOG_LEVEL=INFO
 
 # Canvas Config
+# CANVAS_URL 填学校自己的 Canvas 域名，例如 https://wustl.instructure.com
 
-CANVAS_URL=https://instituation.instructure.com/
+CANVAS_URL=https://your-school.instructure.com
 CANVAS_ACCESS_TOKEN=your_canvas_access_token_here
+
+# Canvas API 重试：只对 429/5xx 和网络超时重试，指数退避 + 抖动
+# 429 若带 Retry-After 头则优先遵循该值
+CANVAS_MAX_RETRIES=3
+CANVAS_TIMEOUT=30
 
 # WebSocket Server Config
 CANVAS_WS_SECRET=your_websocket_secret_here
