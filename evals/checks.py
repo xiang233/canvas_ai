@@ -50,7 +50,7 @@ class MentionsNone:
 
 @dataclass
 class NumericClose:
-    """答案里要出现某个数值，容忍格式差异（83.64 / 83.6 / 84）"""
+    """答案里要出现某个数值，容忍格式差异（77.25 / 77.2 / 77）"""
 
     value: float
     label: str = "numeric_close"

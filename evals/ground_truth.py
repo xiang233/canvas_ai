@@ -24,7 +24,7 @@ class _Client(CanvasAPIBase):
 
 
 def short_name(course_name: str) -> str:
-    """把 'Spring_2026.CSE.5401.01 - Advanced Algorithms' 缩成 'Advanced Algorithms'。
+    """把 'Fall_2024.DEPT.1234.01 - Course Title' 缩成 'Course Title'。
 
     Agent 通常用人类叫法回答，用全名做断言会误判。"""
     if " - " in course_name:
@@ -38,6 +38,8 @@ class GroundTruth:
     def __init__(self):
         self._client = _Client()
         self.courses: List[Dict[str, Any]] = []
+        # 供 case 的 query 生成器复用，避免重复请求
+        self.cached_course_with_assignments: Optional[Dict[str, Any]] = None
 
     async def load(self):
         courses = await self._client._make_request(
@@ -97,6 +99,19 @@ class GroundTruth:
         return enr.get("computed_current_score")
 
     # ---------- 作业 ----------
+
+    async def first_course_with_assignments(self) -> Optional[Dict[str, Any]]:
+        """找第一门确实有作业的课程，结果缓存供 query 生成器复用"""
+        if self.cached_course_with_assignments:
+            return self.cached_course_with_assignments
+        for c in self.distinctive_graded_courses() or self.courses:
+            items = await self._client._make_request(
+                "GET", f"courses/{c['id']}/assignments", params={"per_page": "20"}
+            )
+            if isinstance(items, list) and items:
+                self.cached_course_with_assignments = c
+                return c
+        return None
 
     async def assignments_of(self, keyword: str) -> List[Dict[str, Any]]:
         c = self.find_course(keyword)

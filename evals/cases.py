@@ -48,17 +48,20 @@ async def _list_courses(gt: GroundTruth):
 # ---------------------------------------------------------------- 多跳
 
 async def _assignments_of_course(gt: GroundTruth):
-    course = gt.find_course("Advanced Algorithms")
+    # 不写死课程名：课程会结课，写死既让 case 过期，也把真实选课记录留在了仓库里
+    course = await gt.first_course_with_assignments()
     if not course:
-        return None, "未找到 Advanced Algorithms"
-    items = await gt.assignments_of("Advanced Algorithms")
-    if not items:
-        return None, "该课程无作业数据"
+        return None, "没有任何课程含作业数据"
     return [
         ToolsInclude(["canvas_list_courses", "canvas_get_assignments"]),
         MaxActionSteps(5),
         NoError(),
     ], None
+
+
+def _assignments_query(gt: GroundTruth) -> str:
+    course = gt.cached_course_with_assignments
+    return f"What assignments are in my {short_name(course['name'])} course? List their names."
 
 
 # ---------------------------------------------------------------- 并行
@@ -121,7 +124,7 @@ async def _highest_grade(gt: GroundTruth):
 
 # ---------------------------------------------------------------- 抗幻觉
 
-async def _nonexistent_course(gt: GroundTruth):
+async def _unknown_course_refusal(gt: GroundTruth):
     # 这门课不存在。正确行为是说找不到，而不是编一个成绩出来
     return [
         MentionsNone(
@@ -141,7 +144,7 @@ CASES: List[Case] = [
     ),
     Case(
         id="assignments_multi_hop",
-        query="What assignments are in my Advanced Algorithms course? List their names.",
+        query=_assignments_query,
         tags=["multi_hop"],
         build=_assignments_of_course,
     ),
@@ -164,9 +167,9 @@ CASES: List[Case] = [
         build=_highest_grade,
     ),
     Case(
-        id="hallucination_guard",
+        id="unknown_course_refusal",
         query="What is my current grade in Underwater Basket Weaving 401?",
-        tags=["robustness", "negative"],
-        build=_nonexistent_course,
+        tags=["robustness", "negative", "refusal"],
+        build=_unknown_course_refusal,
     ),
 ]
