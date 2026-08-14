@@ -9,8 +9,9 @@ LLM_PROVIDER=azure
 # Agent 运行参数（eval 扫参用）
 AGENT_MODEL_ID=gpt-4.1-mini
 AGENT_MAX_STEPS=15
-# 0 = 关闭周期性 re-planning。开启需要先在 general_agent.yaml 里补 planning 模板，
-# 否则 _generate_planning_step() 会抛 KeyError: 'planning'
+# 周期性 re-planning：0 = 关闭，N = 每 N 步重新规划一次（step 1 也会触发）
+# 默认关闭：短 query（2-3 步）上实测 +56% 延迟、+29% 输入 token，准确率无变化。
+# 长链路 / 多跳任务可以设成 3 试试
 AGENT_PLANNING_INTERVAL=0
 
 # ---- Azure OpenAI Config ----

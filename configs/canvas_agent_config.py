@@ -54,9 +54,11 @@ canvas_student_agent_config = dict(
     description="Canvas LMS study assistant that helps manage courses, assignments, discussions, and more",
     model_id=os.getenv("AGENT_MODEL_ID", "gpt-4.1-mini"),  # Azure 上填 deployment name；见 .env
     max_steps=int(os.getenv("AGENT_MAX_STEPS", "15")),
-    # Periodic re-planning. Disabled by default: the framework's _generate_planning_step()
-    # needs prompt_templates["planning"], which general_agent.yaml does not define yet,
-    # so any value > 0 currently raises KeyError: 'planning'.
+    # Periodic re-planning. Off by default because it does not pay for itself on the
+    # short queries this agent typically gets: on a 3-query sample it cost ~+56% latency
+    # and ~+29% input tokens with no change in answer correctness, since a 2-3 step task
+    # triggers a planning call at step 1 that it never gets to amortise.
+    # Set AGENT_PLANNING_INTERVAL=3 to enable for longer, multi-hop tasks.
     planning_interval=_planning_interval(),
     template_path="src/agent/general_agent/prompts/general_agent.yaml",  # Prompt template path
     

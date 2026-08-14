@@ -582,7 +582,7 @@ You have been provided with these additional arguments, that you can access usin
                                 input_tokens = event.token_usage.input_tokens
                         yield event
             else:
-                plan_message = self.model.generate(input_messages, stop_sequences=["<end_plan>"])
+                plan_message = await self.model.generate(input_messages, stop_sequences=["<end_plan>"])
                 plan_message_content = plan_message.content
                 input_tokens, output_tokens = (
                     (
@@ -598,7 +598,7 @@ You have been provided with these additional arguments, that you can access usin
         else:
             # Summary mode removes the system prompt and previous planning messages output by the model.
             # Removing previous planning messages avoids influencing too much the new plan.
-            memory_messages = self.write_memory_to_messages(summary_mode=True)
+            memory_messages = await self.write_memory_to_messages(summary_mode=True)
             plan_update_pre = ChatMessage(
                 role=MessageRole.SYSTEM,
                 content=[
@@ -645,7 +645,7 @@ You have been provided with these additional arguments, that you can access usin
                                 input_tokens = event.token_usage.input_tokens
                         yield event
             else:
-                plan_message = self.model.generate(input_messages, stop_sequences=["<end_plan>"])
+                plan_message = await self.model.generate(input_messages, stop_sequences=["<end_plan>"])
                 plan_message_content = plan_message.content
                 if plan_message.token_usage is not None:
                     input_tokens, output_tokens = (
