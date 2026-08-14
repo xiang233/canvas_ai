@@ -1,4 +1,24 @@
-LLM_PROVIDER=openai
+# ============================================================
+# LLM Provider:  azure | openai | auto
+#   azure  = 只用 Azure OpenAI
+#   openai = 只用 OpenAI 官方
+#   auto   = 两个都注册，Azure 优先，缺哪个自动降级（默认）
+# ============================================================
+LLM_PROVIDER=azure
+
+# Agent 运行参数（eval 扫参用）
+AGENT_MODEL_ID=gpt-4.1-mini
+AGENT_MAX_STEPS=15
+AGENT_PLANNING_INTERVAL=3
+
+# ---- Azure OpenAI Config ----
+# 注意：AGENT_MODEL_ID 和 AZURE_OPENAI_DEPLOYMENTS 里填的是 **deployment name**，不是模型名
+AZURE_OPENAI_ENDPOINT=https://canvas-ai-sam.openai.azure.com/
+AZURE_OPENAI_API_KEY=your_azure_key_here
+AZURE_OPENAI_API_VERSION=2024-08-01-preview
+AZURE_OPENAI_DEPLOYMENTS=gpt-4.1-mini
+AZURE_OPENAI_MAX_RETRIES=3
+AZURE_OPENAI_TIMEOUT=60
 
 # Open AI Config
 OPENAI_API_KEY=your_openai_api_key_here

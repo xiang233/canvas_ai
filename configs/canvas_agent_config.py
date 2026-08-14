@@ -4,6 +4,8 @@ Canvas Student Agent configuration.
 Defines an agent tailored for student access to Canvas LMS with the complete Canvas API toolset available to student accounts.
 """
 
+import os
+
 from src.tools.canvas_tools import (
     CanvasListCourses,
     CanvasGetAssignments,
@@ -37,8 +39,9 @@ canvas_student_agent_config = dict(
     type="general_agent",
     name="canvas_student_agent",
     description="Canvas LMS study assistant that helps manage courses, assignments, discussions, and more",
-    model_id="gpt-4o",
-    max_steps=15,
+    model_id=os.getenv("AGENT_MODEL_ID", "gpt-4.1-mini"),  # Azure 上填 deployment name；见 .env
+    max_steps=int(os.getenv("AGENT_MAX_STEPS", "15")),
+    planning_interval=int(os.getenv("AGENT_PLANNING_INTERVAL", "3")),  # Re-plan every 3 steps (planning call uses summary_mode to compress memory)
     template_path="src/agent/general_agent/prompts/general_agent.yaml",  # Prompt template path
     
     # Initialize every Canvas tool available to students

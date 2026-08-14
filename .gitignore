@@ -37,6 +37,9 @@ ENV/
 .env
 .env.local
 
+# 本地备份文件
+*.bak
+
 # 日志和工作目录
 workdir/
 *.log
