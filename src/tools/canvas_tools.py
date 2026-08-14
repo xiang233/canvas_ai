@@ -117,8 +117,12 @@ class CanvasListCourses(CanvasAPIBase):
     """列出学生的所有课程"""
     
     name = "canvas_list_courses"
-    description = "获取当前学生注册的所有课程列表，包括课程名称、ID、状态等信息"
-    
+    description = (
+        "获取当前学生注册的所有课程列表，包括课程名称、ID、状态等信息。"
+        "需要跨多门课比较成绩时，传 include='total_scores' 一次拿回全部分数，"
+        "不要对每门课分别调用 canvas_get_grades。"
+    )
+
     parameters = {
         "type": "object",
         "properties": {
@@ -129,7 +133,11 @@ class CanvasListCourses(CanvasAPIBase):
             },
             "include": {
                 "type": "string",
-                "description": "包含额外信息，可选: total_students, teachers, syllabus_body",
+                "description": (
+                    "包含额外信息，可选: total_scores, total_students, teachers, syllabus_body。"
+                    "total_scores 会在每门课的 enrollments 里返回 computed_current_score 和 "
+                    "computed_current_grade，用它可以一次性拿到所有课程成绩"
+                ),
                 "nullable": True
             }
         },
@@ -170,10 +178,22 @@ class CanvasListCourses(CanvasAPIBase):
                 }
                 courses_info.append(info)
             
+            # include=total_scores 时成绩在 enrollments 里，必须渲染出来，
+            # 否则调用方看不到分数，只能退回逐门课调用 canvas_get_grades
+            lines = []
+            for c in courses_info:
+                line = f"- [{c['id']}] {c['name']} ({c['course_code']})"
+                enr = (c["enrollments"] or [{}])[0]
+                score = enr.get("computed_current_score")
+                if score is not None:
+                    grade = enr.get("computed_current_grade")
+                    line += f" | current_score: {score}"
+                    if grade:
+                        line += f" ({grade})"
+                lines.append(line)
+
             return ToolResult(
-                output=f"找到 {len(courses_info)} 门课程:\n" + 
-                       "\n".join([f"- [{c['id']}] {c['name']} ({c['course_code']})" 
-                                 for c in courses_info]),
+                output=f"找到 {len(courses_info)} 门课程:\n" + "\n".join(lines),
                 error=None
             )
             
