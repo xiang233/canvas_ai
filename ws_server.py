@@ -103,6 +103,7 @@ async def build_agent() -> Any:
         model=model,
         tools=agent_config["tools"],
         max_steps=agent_config["max_steps"],
+        planning_interval=agent_config.get("planning_interval"),
         name=agent_config.get("name"),
         description=agent_config.get("description"),
     )

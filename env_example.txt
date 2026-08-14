@@ -9,7 +9,7 @@ LLM_PROVIDER=azure
 # Agent 运行参数（eval 扫参用）
 AGENT_MODEL_ID=gpt-4.1-mini
 AGENT_MAX_STEPS=15
-AGENT_PLANNING_INTERVAL=3
+AGENT_PLANNING_INTERVAL=0
 
 # ---- Azure OpenAI Config ----
 # 注意：AGENT_MODEL_ID 和 AZURE_OPENAI_DEPLOYMENTS 里填的是 **deployment name**，不是模型名
