@@ -24,7 +24,15 @@ AZURE_OPENAI_MAX_RETRIES=3
 AZURE_OPENAI_TIMEOUT=60
 
 # Open AI Config
+# Vector Store（RAG 索引与检索）用
 OPENAI_API_KEY=your_openai_api_key_here
+
+# Anthropic Config
+# 只给 eval 的 judge 用，不参与 agent 推理。
+# 跨家族评分：被测系统跑 Azure OpenAI，judge 用 Claude，避免同家族自评偏好。
+# key 在 https://console.anthropic.com 申请（与 Claude 订阅额度是两回事）
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+EVAL_JUDGE_MODEL=claude-sonnet-4-5-20250929
 
 # Log Config
 
