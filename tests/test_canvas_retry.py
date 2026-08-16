@@ -5,7 +5,7 @@
 不 mock 内部实现。不需要 Canvas token，也不会打真实 Canvas。
 
 用法：
-    python test_canvas_retry.py
+    python -m tests.test_canvas_retry        # 从仓库根目录运行
 """
 
 import asyncio

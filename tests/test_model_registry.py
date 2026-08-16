@@ -2,8 +2,8 @@
 冒烟测试：确认模型注册表按 LLM_PROVIDER 正确装配，并真实打通一次 chat 调用。
 
 用法：
-    python test_model_registry.py            # 只列出注册的模型别名
-    python test_model_registry.py --call     # 额外发一次真实请求验证 endpoint/key 可用
+    python -m tests.test_model_registry          # 只列出注册的模型别名
+    python -m tests.test_model_registry --call   # 额外发一次真实请求验证 endpoint/key 可用
 """
 
 import asyncio
