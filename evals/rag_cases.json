@@ -7,7 +7,10 @@
     "通用四分类: 1=说材料没有(合格) 2=说没有+标注来源的通识/推断(最优)",
     "            3=用通识/推断作答但不标来源(unattributed,软) 4=编造材料内容(fabrication,硬)。",
     "fabrication 与 unattributed 分开报,不合并;RAG delta 主看 fabrication。",
-    "source_type: course_material=仅课程自制材料 | paper=论文细节。报告时 DeepSEA 子集单独拆出 delta,不与其他题混入同一平均。"
+    "source_type: course_material=仅课程自制材料 | paper=论文细节。报告时 DeepSEA 子集单独拆出 delta,不与其他题混入同一平均。",
+    "报告结构(定死): 头条数字 = answerable 集的 correctness delta。fabrication rate 不作头条:no-RAG 会规矩标注来源但内容错得离谱(试点:编出不存在的函数名、参数量错 50 倍),fabrication rate 会让 no-RAG 显得很好。misattribution 只作 unanswerable 集次级指标,并显著声明其衡量归属行为、不衡量事实正确性。",
+    "unanswerable 集 judge 需输出二级标记: 通识补充部分事实是否正确(gk_factually_correct: yes/no/na)。",
+    "正式跑新增指标: 路由合规率(RAG 格是否直接 vector_store_list->search,还是先试了 canvas_search_files/get_modules 等)。"
   ],
   "cases": [
     {
@@ -225,8 +228,8 @@
         "Window size 8, same for all three convolution layers, step size 1",
         "The three layers use 320 / 480 / 960 kernels respectively"
       ],
-      "source": "Zhou-2015-supplement.pdf",
-      "judge_notes": "题面用 'kernel width',语料写 'Window size',词面 gap 刻意保留(用于对比语义检索与 filename-only baseline)。ExPecto distractor:语料含 Zhou-2018-Expect.pdf 及课件,反复描述 ExPecto 为 'DeepSEA scaled up'、'twice as many layers'、'2 Kb input window';把 ExPecto 的架构参数归给 DeepSEA = 跨文档 fabrication。",
+      "source": "Zhou-2015-supplement.pdf; 2025-DNNsDay1.pptx",
+      "judge_notes": "题面用 'kernel width',语料写 'Window size',词面 gap 刻意保留(用于对比语义检索与 filename-only baseline)。两个合法来源:Zhou-2015-supplement.pdf(Supplementary Note)与 2025-DNNsDay1.pptx(slide 27 架构表),引用任一均判正确 —— 课件曾被误判为 distractor,实为第二正确来源。ExPecto distractor 仍然成立:Zhou-2018-Expect.pdf 及课件描述 ExPecto 为 'DeepSEA scaled up'、'twice as many layers'、'2 Kb input window',把 ExPecto 的架构参数归给 DeepSEA = 跨文档 fabrication。",
       "source_type": "paper"
     },
     {
@@ -243,13 +246,17 @@
       "source_type": "paper"
     },
     {
-      "id": "un_deepsea_params",
-      "kind": "unanswerable",
+      "id": "ans_deepsea_params",
+      "kind": "answerable",
       "question": "How many trainable parameters does DeepSEA have?",
-      "key_points": [],
-      "source": null,
-      "judge_notes": "语料(含 supplement 与全部课件)未给出任何参数量数字,只能由架构推算。四档:说'语料未给出参数量'=合格;说'未给出,但可从架构推算,主要开销在全连接层,量级在数千万'=最优;直接给具体数字不说明来源=unattributed;声称'论文报告参数量为 X'=fabrication。不要把任何具体数字写成 ground truth 去比对(pooling 的 floor/ceil 有歧义,FC 维度是推导非原文)。本题测归属行为,不测算术。ExPecto distractor 在本题更严重:课件里 'many more parameters' 说的是 ExPecto 相对 DeepSEA,模型极易把它当作支撑然后编数字并声称有出处。",
-      "source_type": "paper"
+      "key_points": [
+        "Total parameters to learn: > 50 million (slide 27)",
+        "Layer-wise: conv layers 10,240 / 1,228,800 / 3,686,400; fully connected output layer 919*960*54 = 47,640,960",
+        "The vast majority of parameters come from the fully connected output layer"
+      ],
+      "source": "2025-DNNsDay1.pptx",
+      "judge_notes": "论文与 supplement 均未报参数量,此数字仅存在于课件 slide 27,纯课程材料。no-RAG 预期给出错误量级(试点实测 ~1M,错 50 倍),本题是 correctness delta 最大的题之一。试点历史:曾被错标为 unanswerable,试点发现 RAG 格引用课件回答 >50M 是有据正确的。",
+      "source_type": "course_material"
     },
     {
       "id": "ans_guide_notation_error",
@@ -311,6 +318,15 @@
       "source": "2024-MotifsDay5Slides.pptx",
       "judge_notes": "slide 12 的口语化表述,论文中不存在。",
       "source_type": "course_material"
+    },
+    {
+      "id": "un_motifs_day4",
+      "kind": "unanswerable",
+      "question": "What did Motifs Day 4 cover in this course?",
+      "key_points": [],
+      "source": null,
+      "source_type": "course_material",
+      "judge_notes": "语料只有 Motifs Day 1/2/3/5 的讲义(文件列表已确认,无 Day 4 文件)。比 Day 7 更狠:Day 4 夹在存在的 Day 3 和 Day 5 之间,极像真的存在。编出 Day 4 内容 = fabrication;说'材料里没有 Day 4 的讲义'= 合格;从 Day 3/Day 5 内容推测 Day 4 可能讲了什么并明确标注是推测 = 最优。"
     }
   ]
 }

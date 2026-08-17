@@ -59,6 +59,23 @@ def build_agent(with_rag: bool):
     ))
 
 
+# 路由合规:RAG 格回答内容题时,应直接走 vector_store_list -> vector_store_search,
+# 而不是先翻 Canvas 的文件/模块/页面工具
+DETOUR_TOOLS = {"canvas_search_files", "canvas_get_files", "canvas_get_file_info",
+                "canvas_get_modules", "canvas_get_module_items",
+                "canvas_get_pages", "canvas_get_page_content"}
+
+
+def route_clean(tools):
+    """True = 首次 vector_store_search 之前没有绕路调 Canvas 内容类工具"""
+    for name in tools:
+        if name == "vector_store_search":
+            return True
+        if name in DETOUR_TOOLS:
+            return False
+    return None  # 从未检索(no-RAG 格或提前作答)
+
+
 def collect(agent, latency):
     """从 agent memory 抽出轨迹和检索到的 context（faithfulness 判分要用）"""
     steps = getattr(agent.memory, "steps", [])
@@ -82,6 +99,7 @@ def collect(agent, latency):
     return {
         "action_steps": sum(1 for s in steps if type(s).__name__ == "ActionStep"),
         "tools": tools,
+        "route_clean": route_clean(tools),
         "retrieved": bool(contexts),
         "sources": sources,
         "contexts": contexts,
@@ -124,8 +142,11 @@ def render(case, cells):
     a("=" * 78)
 
     for c in cells:
-        tag = f"{'RAG' if c['rag'] else 'no-RAG':<7} {c['wording']:<11}"
-        a(f"\n--- {tag} {c['action_steps']}步 {c['tokens_in']}/{c['tokens_out']}tok {c['latency']:.1f}s")
+        run = f" run{c['run']}" if c.get("run") else ""
+        tag = f"{'RAG' if c['rag'] else 'no-RAG':<7} {c['wording']:<11}{run}"
+        rc = c.get("route_clean")
+        route = "  路由:干净" if rc is True else ("  路由:绕路" if rc is False else "")
+        a(f"\n--- {tag} {c['action_steps']}步 {c['tokens_in']}/{c['tokens_out']}tok {c['latency']:.1f}s{route}")
         if c["error"]:
             a(f"    ERROR {c['error']}")
             continue
@@ -142,6 +163,7 @@ async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--case", help="只跑这个 case id")
     ap.add_argument("--out", help="把报告另存到这个文件")
+    ap.add_argument("--repeat", type=int, default=1, help="每格重复次数(测检索抖动/方差)")
     args = ap.parse_args()
 
     Path("workdir/rag_pilot").mkdir(parents=True, exist_ok=True)
@@ -154,15 +176,20 @@ async def main() -> int:
         print("没有匹配的 case")
         return 1
 
-    print(f"跑 {len(cases)} 道题 x 2 RAG x 2 措辞 = {len(cases) * 4} 次\n")
+    total = len(cases) * 4 * args.repeat
+    print(f"跑 {len(cases)} 道题 x 2 RAG x 2 措辞 x {args.repeat} 次 = {total} 次\n")
 
     report = []
     for case in cases:
         cells = []
         for with_rag in (True, False):
             for wording in ("neutral", "attributed"):
-                print(f"  running {case['id']} rag={with_rag} wording={wording} ...")
-                cells.append(await run_cell(case, with_rag, wording))
+                for r in range(args.repeat):
+                    print(f"  running {case['id']} rag={with_rag} wording={wording} run={r + 1} ...")
+                    cell = await run_cell(case, with_rag, wording)
+                    if args.repeat > 1:
+                        cell["run"] = r + 1
+                    cells.append(cell)
         block = render(case, cells)
         report.append(block)
         print(block)
