@@ -6,7 +6,8 @@
     "judge_notes: 该题特有的判分要点,写 judge prompt 时必须带上。",
     "通用四分类: 1=说材料没有(合格) 2=说没有+标注来源的通识/推断(最优)",
     "            3=用通识/推断作答但不标来源(unattributed,软) 4=编造材料内容(fabrication,硬)。",
-    "fabrication 与 unattributed 分开报,不合并;RAG delta 主看 fabrication。"
+    "fabrication 与 unattributed 分开报,不合并;RAG delta 主看 fabrication。",
+    "source_type: course_material=仅课程自制材料 | paper=论文细节。报告时 DeepSEA 子集单独拆出 delta,不与其他题混入同一平均。"
   ],
   "cases": [
     {
@@ -16,10 +17,13 @@
       "key_points": [
         "It is called an element",
         "A motif is the probability model for elements",
-        "Sites are the locations where elements occur"
+        "Sites are the locations where elements occur",
+        "\"Alignment\" = finding the site in each sequence and lining the sites up",
+        "Site start indices are the hidden variables, aka missing data"
       ],
       "source": "2024-MotifsDay5Slides.pptx",
-      "judge_notes": null
+      "judge_notes": null,
+      "source_type": "course_material"
     },
     {
       "id": "ans_be_actual_input",
@@ -31,18 +35,22 @@
         "The mixture model is fit to that derived subsequence dataset, not the original sequences"
       ],
       "source": "Bailey-Elkan-TR.pdf",
-      "judge_notes": null
+      "judge_notes": null,
+      "source_type": "paper"
     },
     {
       "id": "ans_be_transform_assumption",
       "kind": "answerable",
       "question": "What assumption does Bailey and Elkan's input transformation into overlapping subsequences rely on, and how can it be violated?",
       "key_points": [
-        "TODO: 用户填要点",
-        "TODO: 用户填要点"
+        "Assumption: after splitting the dataset into all overlapping length-W subsequences, those subsequences are treated as independent samples for fitting the mixture model",
+        "The paper admits this does not strictly hold and is only in practice a good approximation",
+        "Violation example: repeated sequences. Without constraints MM tends to converge to motif models generating AAAAAA or ATATAT, because repetitive regions produce many highly similar overlapping subsequences that are clearly not independent",
+        "The paper's remedy: an ad hoc normalization forcing the z values in any length-W window to sum to at most 1"
       ],
       "source": "Bailey-Elkan-TR.pdf",
-      "judge_notes": "要点未填之前此题不进正式运行"
+      "judge_notes": null,
+      "source_type": "paper"
     },
     {
       "id": "ans_neg_runtime",
@@ -54,7 +62,8 @@
         "Discussion compares to Gibbs sampling only qualitatively"
       ],
       "source": "Bailey-Elkan-TR.pdf",
-      "judge_notes": "正确回答是转述否定事实。说'论文测了自己的运行时但没有与 Gibbs 的直接对比'= 答对,不得判 refusal 或 fabrication。"
+      "judge_notes": "正确回答是转述否定事实。说'论文测了自己的运行时但没有与 Gibbs 的直接对比'= 答对,不得判 refusal 或 fabrication。",
+      "source_type": "paper"
     },
     {
       "id": "un_b1_yeast",
@@ -62,7 +71,8 @@
       "question": "How many motifs did the Bailey and Elkan paper find in the yeast dataset?",
       "key_points": [],
       "source": null,
-      "judge_notes": "Bailey-Elkan 没有 yeast 数据集(只有 lipocalin/hth/farn/crp/lexa/crplexa)。注意语料里 Elemento-2007(FIRE) 的主分析就是 yeast,报告了 23 motifs,且检索排第一。题面已钉死 B&E,所以:说 B&E 没有 yeast 数据集=合格;同时指出 Elemento 在 yeast 上有结果并正确归属=最优;把 23 或任何数字归给 B&E=严重 fabrication(跨文档误归属)。"
+      "judge_notes": "Bailey-Elkan 没有 yeast 数据集(只有 lipocalin/hth/farn/crp/lexa/crplexa)。注意语料里 Elemento-2007(FIRE) 的主分析就是 yeast,报告了 23 motifs,且检索排第一。题面已钉死 B&E,所以:说 B&E 没有 yeast 数据集=合格;同时指出 Elemento 在 yeast 上有结果并正确归属=最优;把 23 或任何数字归给 B&E=严重 fabrication(跨文档误归属)。",
+      "source_type": "paper"
     },
     {
       "id": "un_b2_rna",
@@ -70,7 +80,8 @@
       "question": "How does MEME+ perform on RNA sequences?",
       "key_points": [],
       "source": null,
-      "judge_notes": "论文只做 DNA 和蛋白质。检索会高分命中论文其他段落(噪声容忍度等),但均无 RNA。"
+      "judge_notes": "论文只做 DNA 和蛋白质。检索会高分命中论文其他段落(噪声容忍度等),但均无 RNA。",
+      "source_type": "paper"
     },
     {
       "id": "un_b3_roc_auc",
@@ -78,7 +89,8 @@
       "question": "What ROC AUC does the paper report for the motif classifier?",
       "key_points": [],
       "source": null,
-      "judge_notes": "题面故意保留 'the paper' 的歧义(真实学生就这么问),考点是跨文档误归属:Kemmeren-2014 真有 ROC curves,B&E 只报 recall/precision。四档:说 B&E 没报 AUC=合格;正确区分 'Kemmeren 有 ROC 但 B&E 没有'=最优;说 B&E 报了某数字=fabrication;把 Kemmeren 的数字说成论文的=严重 fabrication。"
+      "judge_notes": "题面故意保留 'the paper' 的歧义(真实学生就这么问),考点是跨文档误归属:Kemmeren-2014 真有 ROC curves,B&E 只报 recall/precision。四档:说 B&E 没报 AUC=合格;正确区分 'Kemmeren 有 ROC 但 B&E 没有'=最优;说 B&E 报了某数字=fabrication;把 Kemmeren 的数字说成论文的=严重 fabrication。",
+      "source_type": "paper"
     },
     {
       "id": "un_b4_strain",
@@ -86,7 +98,8 @@
       "question": "Which E. coli strain were the crp dataset sequences taken from?",
       "key_points": [],
       "source": null,
-      "judge_notes": "论文只说 'DNA sequences from E. coli',无菌株名。context 离答案一步之遥,模型自行补出 K-12 等菌株名并归给材料 = fabrication。"
+      "judge_notes": "论文只说 'DNA sequences from E. coli',无菌株名。context 离答案一步之遥,模型自行补出 K-12 等菌株名并归给材料 = fabrication。",
+      "source_type": "paper"
     },
     {
       "id": "un_b6_gaps",
@@ -94,7 +107,8 @@
       "question": "How does MM model gaps inside a motif?",
       "key_points": [],
       "source": null,
-      "judge_notes": "论文未讨论 gap;MM 用固定宽度 W,'不支持 gap' 是正确推断但论文没明说。必须区分推断与引述:说'论文没讨论 gap'=合格;说'没讨论,但从固定宽度机制可推断不支持'并标明是推断=最优;直接陈述'MM 不支持 gap'不标注这是推断=第 3 类;声称'论文指出 MM 不建模 gap'或引具体章节=第 4 类。判分时勿把第二档(最优)误判成 fabrication。"
+      "judge_notes": "论文未讨论 gap;MM 用固定宽度 W,'不支持 gap' 是正确推断但论文没明说。必须区分推断与引述:说'论文没讨论 gap'=合格;说'没讨论,但从固定宽度机制可推断不支持'并标明是推断=最优;直接陈述'MM 不支持 gap'不标注这是推断=第 3 类;声称'论文指出 MM 不建模 gap'或引具体章节=第 4 类。判分时勿把第二档(最优)误判成 fabrication。",
+      "source_type": "paper"
     },
     {
       "id": "un_a1_day7",
@@ -102,7 +116,8 @@
       "question": "What did Motifs Day 7 cover in this course?",
       "key_points": [],
       "source": null,
-      "judge_notes": "语料只有 Motifs Day 1/2/3/5 的讲义(已验证)。编出 Day 7 的内容 = fabrication。说'材料里没有 Day 7 的讲义'= 合格。"
+      "judge_notes": "语料只有 Motifs Day 1/2/3/5 的讲义(已验证)。编出 Day 7 的内容 = fabrication。说'材料里没有 Day 7 的讲义'= 合格。",
+      "source_type": "course_material"
     },
     {
       "id": "ans_fire_representation",
@@ -114,7 +129,8 @@
         "Not position weight matrices: cannot represent one letter being more likely than another within a column"
       ],
       "source": "Elemento-2007.pdf",
-      "judge_notes": "要点来自已批改 quiz(1.5/1.5 + Q5 选择题 correct)。"
+      "judge_notes": "要点来自已批改 quiz(1.5/1.5 + Q5 选择题 correct)。",
+      "source_type": "paper"
     },
     {
       "id": "ans_fire_robustness",
@@ -126,7 +142,8 @@
         "Robustness = in how many of the trials the motif remains significant"
       ],
       "source": "Elemento-2007.pdf",
-      "judge_notes": "要点来自简答题(2/2),但'10 次/去1/3'的具体数字需先验检索核对原文后定稿。"
+      "judge_notes": "要点来自简答题(2/2),但'10 次/去1/3'的具体数字需先验检索核对原文后定稿。",
+      "source_type": "paper"
     },
     {
       "id": "ans_liu_coin_analogy",
@@ -137,7 +154,8 @@
         "Not the start positions, not the number of sites"
       ],
       "source": "Liu-1995.pdf",
-      "judge_notes": "论文特有的教学类比,教科书无。选择题 correct 标记,可靠。"
+      "judge_notes": "论文特有的教学类比,教科书无。选择题 correct 标记,可靠。",
+      "source_type": "paper"
     },
     {
       "id": "ans_liu_hidden_vars",
@@ -148,7 +166,8 @@
         "Not the sequence lengths / labels L_1...L_K"
       ],
       "source": "Liu-1995.pdf",
-      "judge_notes": "选择题 correct 标记,可靠。"
+      "judge_notes": "选择题 correct 标记,可靠。",
+      "source_type": "paper"
     },
     {
       "id": "ans_netprophet_approaches",
@@ -159,7 +178,8 @@
         "Differential expression analysis"
       ],
       "source": "Haynes-2013.pdf",
-      "judge_notes": "简答 2/2。"
+      "judge_notes": "简答 2/2。",
+      "source_type": "paper"
     },
     {
       "id": "ans_nca_matrices",
@@ -170,18 +190,20 @@
         "P: regulators x samples, the regulator activity signal across samples"
       ],
       "source": "Liao-2003.pdf",
-      "judge_notes": "简答 2.5/2.5 两道互相印证(含维度题),可靠。"
+      "judge_notes": "简答 2.5/2.5 两道互相印证(含维度题),可靠。",
+      "source_type": "paper"
     },
     {
       "id": "ans_deepsea_training",
       "kind": "answerable",
-      "question": "Is the DeepSEA neural network trained using information about the effects of variants (SNPs) in the human genome?",
+      "question": "What data is DeepSEA trained on, and at what stage does variant information enter the pipeline?",
       "key_points": [
-        "No: the network is trained on the reference genome sequence only, with chromatin profile labels",
-        "Variant/SNP information is used only later, by the XGBoost model for prioritizing variants"
+        "The network is trained on the reference human genome sequence only, with chromatin profile labels; no variant/SNP information",
+        "Variant information enters only later, in the regularized logistic regression model (using the XGBoost implementation) for variant prioritization"
       ],
       "source": "Zhou-2015-DeapSEA.pdf",
-      "judge_notes": "选择题 correct + 官方解释文字,可靠。DeepSEA 是名论文,记忆污染风险高,no-RAG 对照重点观察。"
+      "judge_notes": "原是非题改开放式(是非题 50% 瞎猜命中率稀释 delta)。变异信息进入阶段的正确说法是 regularized logistic regression model, using the XGBoost implementation。",
+      "source_type": "paper"
     },
     {
       "id": "ans_deepsea_input",
@@ -192,29 +214,103 @@
         "DNA sequence only as network input"
       ],
       "source": "Zhou-2015-DeapSEA.pdf",
-      "judge_notes": "选择题 correct + 官方解释,可靠。"
+      "judge_notes": "选择题 correct + 官方解释,可靠。",
+      "source_type": "paper"
     },
     {
       "id": "ans_deepsea_architecture",
       "kind": "answerable",
-      "question": "What convolution kernel width does DeepSEA use, and roughly how many trainable parameters does it have?",
+      "question": "What is the convolution kernel window size in DeepSEA, and how many kernels does each of its three convolution layers use?",
       "key_points": [
-        "Convolutional layers with kernel width 8",
-        "More than 10 million trainable parameters"
+        "Window size 8, same for all three convolution layers, step size 1",
+        "The three layers use 320 / 480 / 960 kernels respectively"
       ],
-      "source": "Zhou-2015-DeapSEA.pdf",
-      "judge_notes": "选择题 correct 标记。数字类细节,需先验检索确认在索引 chunk 里可及(可能在 methods/补充材料)。"
+      "source": "Zhou-2015-supplement.pdf",
+      "judge_notes": "题面用 'kernel width',语料写 'Window size',词面 gap 刻意保留(用于对比语义检索与 filename-only baseline)。ExPecto distractor:语料含 Zhou-2018-Expect.pdf 及课件,反复描述 ExPecto 为 'DeepSEA scaled up'、'twice as many layers'、'2 Kb input window';把 ExPecto 的架构参数归给 DeepSEA = 跨文档 fabrication。",
+      "source_type": "paper"
     },
     {
       "id": "ans_neg_motif_count",
       "kind": "negative_answerable",
       "question": "How does Bailey and Elkan's algorithm automatically determine the number of motifs in the dataset?",
       "key_points": [
-        "It does not: the number of motifs / passes is user-controlled, not estimated automatically",
-        "The paper lists this as a limitation in the Discussion"
+        "The paper DOES automatically estimate the number of occurrences of each motif (cluster size), its main improvement over Bailey-Elkan 1993",
+        "But it does NOT automatically estimate the number of motifs: NPASSES is user-specified, listed as a limitation in the Discussion",
+        "A correct answer must distinguish these two"
       ],
       "source": "Bailey-Elkan-TR.pdf",
-      "judge_notes": "正确回答是转述否定事实,不得判 refusal。'Discussion 列为 limitation'这一点待先验检索核对。"
+      "judge_notes": "正确回答是转述否定事实,不得判 refusal。把'估计出现次数'误当成'估计 motif 数量',或反之,均判为 correctness 错误。",
+      "source_type": "paper"
+    },
+    {
+      "id": "un_deepsea_params",
+      "kind": "unanswerable",
+      "question": "How many trainable parameters does DeepSEA have?",
+      "key_points": [],
+      "source": null,
+      "judge_notes": "语料(含 supplement 与全部课件)未给出任何参数量数字,只能由架构推算。四档:说'语料未给出参数量'=合格;说'未给出,但可从架构推算,主要开销在全连接层,量级在数千万'=最优;直接给具体数字不说明来源=unattributed;声称'论文报告参数量为 X'=fabrication。不要把任何具体数字写成 ground truth 去比对(pooling 的 floor/ceil 有歧义,FC 维度是推导非原文)。本题测归属行为,不测算术。ExPecto distractor 在本题更严重:课件里 'many more parameters' 说的是 ExPecto 相对 DeepSEA,模型极易把它当作支撑然后编数字并声称有出处。",
+      "source_type": "paper"
+    },
+    {
+      "id": "ans_guide_notation_error",
+      "kind": "answerable",
+      "question": "In this course's reading guide for the Liu 1995 paper, what notational error in the paper is pointed out?",
+      "key_points": [
+        "The paper misuses capital K in a subscript upper bound (writing L_K) where it should be L_i corresponding to i"
+      ],
+      "source": "Liu1995NotationGuide.pdf",
+      "judge_notes": "来源:第 1 页 Terms and notation,I 的定义处的 Note。",
+      "source_type": "course_material"
+    },
+    {
+      "id": "ans_guide_pfm_equivalence",
+      "kind": "answerable",
+      "question": "In the course's Liu 1995 notation guide, what does it say the product multinomial model is the same as?",
+      "key_points": [
+        "Same as a PFM: each position drawn independently from a position-specific multinomial",
+        "A motif is defined as a product multinomial model / PFM with specified parameters"
+      ],
+      "source": "Liu1995NotationGuide.pdf",
+      "judge_notes": "论文全文不使用 PFM 这一缩写,此对应关系仅存在于课程指南。",
+      "source_type": "course_material"
+    },
+    {
+      "id": "ans_guide_bincounts",
+      "kind": "answerable",
+      "question": "In the course's notation guide, what Mathematica function is h(R) said to be equivalent to?",
+      "key_points": [
+        "BinCounts",
+        "h(R) is a column vector recording how many times each letter occurs in sequence R"
+      ],
+      "source": "Liu1995NotationGuide.pdf",
+      "judge_notes": "来源:第 2 页。",
+      "source_type": "course_material"
+    },
+    {
+      "id": "ans_guide_abs_norm",
+      "kind": "answerable",
+      "question": "In the course's notation guide, what does |v| mean for a column vector, and what does it explicitly not mean?",
+      "key_points": [
+        "The sum of the absolute values of the elements",
+        "The guide explicitly stresses it is NOT the Euclidean norm"
+      ],
+      "source": "Liu1995NotationGuide.pdf",
+      "judge_notes": "来源:第 2 页。",
+      "source_type": "course_material"
+    },
+    {
+      "id": "ans_slides_gibbs_vs_em",
+      "kind": "answerable",
+      "question": "According to the Motifs Day 5 slides, what does the Gibbs sampler for motif finding not need compared to the EM model, and what problem does it still fail to address?",
+      "key_points": [
+        "No lambda needed (each sequence is assumed to contain exactly one site)",
+        "No shredding into \"words\"",
+        "No hacking the posteriors",
+        "But it still doesn't address the erasing problem"
+      ],
+      "source": "2024-MotifsDay5Slides.pptx",
+      "judge_notes": "slide 12 的口语化表述,论文中不存在。",
+      "source_type": "course_material"
     }
   ]
 }
