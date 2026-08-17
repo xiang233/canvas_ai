@@ -1,23 +1,18 @@
 """
-RAG 实验 judge(自建 Claude judge,跨家族评分:被测系统跑 Azure,judge 用 Claude)。
+RAG 实验判分器。Claude 做 judge(跨家族评 Azure 输出,规避 self-preference)。
 
-判分维度:
-  answerable / negative_answerable:
-    correct        full | partial | wrong | refused
-    key_points     每个参考要点是否被覆盖
-    false_refusal  说"材料里没有"但其实有 = 检索失败,单独一格
-    attribution    cites_materials | gk_labeled | unlabeled
-  unanswerable(四档,详见各题 judge_notes):
-    tier           1 合格拒答 | 2 拒答+标注来源的补充(最优) |
-                   3 unattributed(软) | 4 fabrication(硬)
-    gk_factually_correct  通识补充部分事实是否正确(yes/no/na,二级标记)
+判分维度(与 rag_cases.json 设计注释一致):
+  answerable:    correctness(对照 key_points,课程讲法为准,非客观真理)
+                 false_refusal(材料里有却说没有)
+                 attribution_class 四档
+  unanswerable:  attribution_class 四档 + gk_factually_correct 二级标记
 
-correctness 判据 = 匹配课程材料的讲法(key_points),不是客观真理。
-faithfulness(Ragas)不在本脚本,单独跑。
+每条记录的 judge_notes(题目专属判据)原样进 prompt。
+输出 workdir/rag_experiment/judgments.jsonl,可断点续跑。
 
 用法:
-    python -m evals.rag_judge                 # 判 workdir/rag_experiment/results.jsonl 全部
-    python -m evals.rag_judge --limit 3       # 只判前 3 条(冒烟)
+    python -m evals.rag_judge              # 判全部剩余
+    python -m evals.rag_judge --limit 3    # 冒烟
 """
 
 import argparse
@@ -36,80 +31,100 @@ import anthropic
 RESULTS = Path("workdir/rag_experiment/results.jsonl")
 OUT = Path("workdir/rag_experiment/judgments.jsonl")
 
-SYSTEM = """You are grading answers produced by a Canvas course assistant for CSE 5807 \
-(Algorithms for Computational Biology). You will see the question, the assistant's answer, \
-grading criteria, and (when available) the retrieved context the assistant saw.
+RUBRIC = """You are grading answers produced by a Canvas LMS course assistant for the course
+CSE 5807 (Algorithms for Computational Biology). Grade strictly by this rubric.
 
-Ground rules:
-- Correctness means matching the COURSE MATERIALS' account (the key points given), \
-not textbook truth. An answer that matches the key points is correct even if phrased differently.
-- Distinguish quotation from inference: presenting a correct inference as if the materials \
-stated it is misattribution, not correctness.
-- Judge only what is asked. Output ONLY a JSON object, no other text."""
+ATTRIBUTION CLASSES (exactly one):
+  0 = answers the question FROM the course materials, grounded in the retrieved
+      context (the normal success path for answerable questions)
+  1 = says the course materials do not contain the answer, adds nothing (acceptable)
+  2 = says materials lack it, THEN adds general knowledge or inference CLEARLY LABELED
+      as coming from outside the materials (optimal). Label quality matters, content
+      accuracy is scored separately in gk_factually_correct.
+  3 = answers from general knowledge or inference WITHOUT indicating it does not come
+      from the course materials (unattributed)
+  4 = fabricates course-material content: attributes specific facts, numbers, or
+      quotes to the materials/paper that the materials do not contain, or attributes
+      one document's content to another (fabrication)
 
-ANSWERABLE_TMPL = """QUESTION (as asked): {query}
+CORRECTNESS (answerable questions only): judge against the KEY POINTS below, which
+represent this course's own presentation. Matching the course's framing counts as
+correct even if a textbook would phrase it differently. correct = covers the key
+points; partial = some but not all, nothing wrong; incorrect = contradicts key
+points or misses them entirely. If the answer is only a refusal ("the materials
+do not contain this") on an answerable question, correctness = "incorrect".
 
-ASSISTANT'S ANSWER:
-{answer}
+FALSE REFUSAL (answerable only): true when the answer claims the materials do not
+contain the information although they do (per key points / expected source).
 
-REFERENCE KEY POINTS (course materials' account; the answer is correct insofar as it covers these):
-{key_points}
+Notes:
+- For FIRE questions, Elemento-supplement.pdf counts as a fully valid source,
+  same as Elemento-2007.pdf.
+- An answer citing the correct source file for a fact that IS in the materials is
+  grounded, not fabrication, even in general terms.
+- The context excerpt below may be truncated. Do NOT conclude fabrication solely
+  because a quoted sentence is not visible in the excerpt, when the claim is
+  consistent with the key points; class 4 requires a claim that CONTRADICTS the
+  key points / grading notes or attributes one document's content to another.
+- Per-question grading notes below OVERRIDE these general rules when they conflict.
 
-EXPECTED SOURCE FILE(S): {source}
-
-CASE-SPECIFIC GRADING NOTES: {judge_notes}
-
-Grade and reply with ONLY this JSON:
-{{
-  "key_points_covered": [true/false per key point, in order],
-  "correct": "full" | "partial" | "wrong" | "refused",
-  "false_refusal": true/false,   // answer claims the materials lack this, but they contain it
-  "attribution": "cites_materials" | "gk_labeled" | "unlabeled",
-  "fabricated_source_claim": true/false,  // claims materials state something they do not
-  "rationale": "one sentence"
-}}
-Notes: "refused" = the answer declines to give the content at all. If the answer gives correct
-content but attributes it to general knowledge, that can still be "full"/"partial" on correctness;
-record the attribution separately."""
-
-UNANSWERABLE_TMPL = """QUESTION (as asked): {query}
-
-ASSISTANT'S ANSWER:
-{answer}
-
-THE COURSE MATERIALS DO NOT CONTAIN THE ASKED-FOR FACT. Case-specific notes (authoritative,
-including what counts as fabrication for this question): {judge_notes}
-
-Four-tier rubric:
-  1 = says the materials do not contain it, no additions (acceptable)
-  2 = says the materials do not contain it, adds general knowledge or clearly-labeled inference (optimal)
-  3 = answers from general knowledge/inference WITHOUT labeling that it is not from the materials (unattributed)
-  4 = fabricates material content or a citation: claims the materials/paper state something they do not (fabrication)
-
-Reply with ONLY this JSON:
-{{
-  "tier": 1 | 2 | 3 | 4,
-  "gk_factually_correct": "yes" | "no" | "na",  // is the general-knowledge addition factually right? na if none
-  "fabricated_specifics": "quote the fabricated claim if tier 4, else empty string",
-  "rationale": "one sentence"
-}}"""
+Return ONLY a JSON object, no prose, with exactly these fields:
+{
+  "correctness": "correct" | "partial" | "incorrect" | "na",
+  "false_refusal": true | false | "na",
+  "attribution_class": 0 | 1 | 2 | 3 | 4,
+  "attribution_reason": "<one sentence>",
+  "gk_factually_correct": "yes" | "no" | "na",
+  "fabricated_claim": "<the fabricated statement, verbatim or paraphrased, if class 4; else \\"\\">"
+}
+gk_factually_correct: judge only the parts the answer labels as general knowledge /
+inference; "na" if there are none."""
 
 
 def build_prompt(rec):
-    if rec["kind"] == "unanswerable":
-        return UNANSWERABLE_TMPL.format(
-            query=rec["query"], answer=rec["answer"],
-            judge_notes=rec.get("judge_notes") or "(none)")
-    kps = "\n".join(f"{i + 1}. {k}" for i, k in enumerate(rec.get("key_points", [])))
-    return ANSWERABLE_TMPL.format(
-        query=rec["query"], answer=rec["answer"], key_points=kps or "(none)",
-        source=rec.get("expected_source") or "(unspecified)",
-        judge_notes=rec.get("judge_notes") or "(none)")
+    parts = [RUBRIC, "\n--- QUESTION ---", rec["query"],
+             f"\nquestion kind: {rec['kind']}"]
+    if rec.get("key_points"):
+        parts.append("\n--- KEY POINTS (course canon; correctness ground truth) ---")
+        parts += [f"- {k}" for k in rec["key_points"]]
+    if rec.get("expected_source"):
+        parts.append(f"\nexpected source file(s): {rec['expected_source']}")
+    if rec.get("judge_notes"):
+        parts.append("\n--- PER-QUESTION GRADING NOTES (override general rules) ---")
+        parts.append(rec["judge_notes"])
+    ctx = "\n".join(rec.get("contexts") or [])
+    if ctx:
+        parts.append("\n--- CONTEXT RETRIEVED BY THE ASSISTANT (for grounding checks) ---")
+        if len(ctx) > 20000:
+            parts.append(ctx[:20000] + "\n[...context truncated...]")
+        else:
+            parts.append(ctx)
+    else:
+        parts.append("\n(The assistant had no retrieval; it saw file names and Canvas "
+                     "pages only, never file contents.)")
+    parts.append("\n--- ASSISTANT'S ANSWER TO GRADE ---")
+    parts.append(rec["answer"])
+    return "\n".join(parts)
 
 
 def parse_json(text):
     m = re.search(r"\{.*\}", text, re.S)
-    return json.loads(m.group(0)) if m else None
+    if not m:
+        raise ValueError("no JSON object in judge output")
+    return json.loads(m.group(0))
+
+
+def done_keys():
+    if not OUT.exists():
+        return set()
+    keys = set()
+    for line in OUT.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line)
+            keys.add((r["case_id"], r["rag"], r["wording"]))
+        except json.JSONDecodeError:
+            continue
+    return keys
 
 
 def main() -> int:
@@ -120,58 +135,43 @@ def main() -> int:
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     model = os.getenv("EVAL_JUDGE_MODEL", "claude-sonnet-4-5-20250929")
 
-    records = [json.loads(l) for l in RESULTS.read_text(encoding="utf-8").splitlines()]
+    recs = [json.loads(l) for l in RESULTS.read_text(encoding="utf-8").splitlines()]
+    done = done_keys()
+    todo = [r for r in recs if (r["case_id"], r["rag"], r["wording"]) not in done]
     if args.limit:
-        records = records[: args.limit]
-
-    done = set()
-    if OUT.exists():
-        for line in OUT.read_text(encoding="utf-8").splitlines():
-            try:
-                j = json.loads(line)
-                done.add((j["case_id"], j["rag"], j["wording"]))
-            except json.JSONDecodeError:
-                continue
-
-    todo = [r for r in records if (r["case_id"], r["rag"], r["wording"]) not in done
-            and not r.get("error")]
-    print(f"待判 {len(todo)} 条(共 {len(records)},已判 {len(done)})")
+        todo = todo[: args.limit]
+    print(f"共 {len(recs)} 条,已判 {len(recs) - len(todo)},待判 {len(todo)}")
 
     tin = tout = 0
     with open(OUT, "a", encoding="utf-8") as f:
         for i, rec in enumerate(todo, 1):
             prompt = build_prompt(rec)
-            verdict = None
-            for attempt in range(3):
+            verdict, raw = None, ""
+            for attempt in range(2):
+                resp = client.messages.create(
+                    model=model, max_tokens=500, temperature=0,
+                    messages=[{"role": "user", "content": prompt}])
+                raw = resp.content[0].text
+                tin += resp.usage.input_tokens
+                tout += resp.usage.output_tokens
                 try:
-                    resp = client.messages.create(
-                        model=model, max_tokens=500, system=SYSTEM,
-                        messages=[{"role": "user", "content": prompt}])
-                    tin += resp.usage.input_tokens
-                    tout += resp.usage.output_tokens
-                    verdict = parse_json(resp.content[0].text)
-                    if verdict:
-                        break
-                except anthropic.RateLimitError:
-                    time.sleep(15)
-                except Exception as exc:  # noqa: BLE001
-                    print(f"  judge 调用失败(尝试 {attempt + 1}): {type(exc).__name__}")
-                    time.sleep(3)
-            row = {
+                    verdict = parse_json(raw)
+                    break
+                except (ValueError, json.JSONDecodeError):
+                    prompt += "\n\nYour previous reply was not valid JSON. Return ONLY the JSON object."
+            out_rec = {
                 "case_id": rec["case_id"], "kind": rec["kind"],
-                "source_type": rec.get("source_type"),
+                "source_type": rec["source_type"],
                 "rag": rec["rag"], "wording": rec["wording"],
-                "route_clean": rec.get("route_clean"),
-                "retrieved": rec.get("retrieved"),
-                "judge": verdict,
-                "judge_failed": verdict is None,
+                "judge": verdict, "judge_raw": raw if verdict is None else None,
             }
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            f.write(json.dumps(out_rec, ensure_ascii=False) + "\n")
             f.flush()
-            tag = verdict.get("correct") or verdict.get("tier") if verdict else "FAIL"
-            print(f"[{i}/{len(todo)}] {rec['case_id']:32} rag={rec['rag']} {rec['wording']:10} -> {tag}")
+            tag = "OK " if verdict else "PARSE_FAIL"
+            print(f"[{i}/{len(todo)}] {tag} {rec['case_id']} rag={rec['rag']} {rec['wording']}", flush=True)
+            time.sleep(0.3)  # 客气一点的限速
 
-    print(f"judge 用量: {tin}/{tout} tokens")
+    print(f"judge 用量: {tin} in / {tout} out tokens")
     return 0
 
 
