@@ -1743,6 +1743,87 @@ __all__ = [
     "VectorStoreSearch",
     "VectorStoreListFiles",
     "VectorStoreGetFile",
+    "CanvasReadFileContent",
 ]
+
+
+@TOOL.register_module(name="canvas_read_file_content", force=True)
+class CanvasReadFileContent(CanvasAPIBase):
+    """下载 Canvas 文件并提取正文文本(实验二 baseline 专用,不在默认工具集里)"""
+
+    name = "canvas_read_file_content"
+    description = (
+        "下载并提取指定文件的完整正文文本(支持 pdf/pptx/docx 等)。"
+        "返回该文件的全部内容,超过 50000 字符会截断并明确标注。"
+        "需要先用 canvas_search_files 或 canvas_get_files 获得 file_id"
+    )
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "file_id": {
+                "type": "string",
+                "description": "文件ID(从 canvas_search_files 或 canvas_get_files 的输出里获得)"
+            }
+        },
+        "required": ["file_id"],
+        "additionalProperties": False
+    }
+
+    output_type = "any"
+
+    MAX_CHARS = 50_000
+
+    async def forward(self, file_id: str) -> ToolResult:
+        import tempfile
+        from pathlib import Path
+
+        info = await self._make_request("GET", f"files/{file_id}")
+        if isinstance(info, dict) and "error" in info:
+            return ToolResult(output=None, error=f"获取文件信息失败: {info['error']}")
+
+        url = info.get("url")
+        display_name = info.get("display_name") or info.get("filename") or f"file-{file_id}"
+        if not url:
+            return ToolResult(output=None, error=f"文件 {display_name} 没有可用的下载链接")
+
+        suffix = Path(display_name).suffix or ".bin"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                    if resp.status != 200:
+                        return ToolResult(output=None,
+                                          error=f"下载失败 (HTTP {resp.status}): {display_name}")
+                    data = await resp.read()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return ToolResult(output=None, error=f"下载失败: {type(e).__name__}: {e}")
+
+        def _extract() -> str:
+            from markitdown import MarkItDown
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+            try:
+                return MarkItDown().convert(tmp_path).text_content
+            finally:
+                os.unlink(tmp_path)
+
+        try:
+            text = await asyncio.to_thread(_extract)
+        except Exception as e:  # noqa: BLE001 - 提取失败必须显式报错,不能静默变成空内容
+            return ToolResult(output=None,
+                              error=f"无法提取 {display_name} 的文本 ({type(e).__name__}: {e})。"
+                                    f"该格式可能不受支持")
+
+        if not text or not text.strip():
+            return ToolResult(output=None,
+                              error=f"{display_name} 提取结果为空(可能是扫描件或纯图片文件)")
+
+        header = f"文件: {display_name} (file_id={file_id}, 提取 {len(text)} 字符)\n"
+        if len(text) > self.MAX_CHARS:
+            body = text[: self.MAX_CHARS] + f"\n[truncated at {self.MAX_CHARS} chars]"
+        else:
+            body = text
+        return ToolResult(output=header + body, error=None)
 
 

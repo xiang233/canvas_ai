@@ -28,8 +28,8 @@ load_dotenv()
 
 import anthropic
 
-RESULTS = Path("workdir/rag_experiment/results.jsonl")
-OUT = Path("workdir/rag_experiment/judgments.jsonl")
+DEFAULT_RESULTS = "workdir/rag_experiment/results.jsonl"
+DEFAULT_OUT = "workdir/rag_experiment/judgments.jsonl"
 
 RUBRIC = """You are grading answers produced by a Canvas LMS course assistant for the course
 CSE 5807 (Algorithms for Computational Biology). Grade strictly by this rubric.
@@ -94,14 +94,15 @@ def build_prompt(rec):
         parts.append(rec["judge_notes"])
     ctx = "\n".join(rec.get("contexts") or [])
     if ctx:
-        parts.append("\n--- CONTEXT RETRIEVED BY THE ASSISTANT (for grounding checks) ---")
+        parts.append("\n--- MATERIAL CONTENT THE ASSISTANT ACTUALLY SAW "
+                     "(retrieved chunks or files it read; for grounding checks) ---")
         if len(ctx) > 20000:
             parts.append(ctx[:20000] + "\n[...context truncated...]")
         else:
             parts.append(ctx)
     else:
-        parts.append("\n(The assistant had no retrieval; it saw file names and Canvas "
-                     "pages only, never file contents.)")
+        parts.append("\n(The assistant saw no material content: it had access to file "
+                     "names and Canvas page metadata only.)")
     parts.append("\n--- ASSISTANT'S ANSWER TO GRADE ---")
     parts.append(rec["answer"])
     return "\n".join(parts)
@@ -114,14 +115,14 @@ def parse_json(text):
     return json.loads(m.group(0))
 
 
-def done_keys():
-    if not OUT.exists():
+def done_keys(out_path):
+    if not out_path.exists():
         return set()
     keys = set()
-    for line in OUT.read_text(encoding="utf-8").splitlines():
+    for line in out_path.read_text(encoding="utf-8").splitlines():
         try:
             r = json.loads(line)
-            keys.add((r["case_id"], r["rag"], r["wording"]))
+            keys.add((r.get("arm"), r["case_id"], r["rag"], r["wording"]))
         except json.JSONDecodeError:
             continue
     return keys
@@ -130,20 +131,24 @@ def done_keys():
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, help="只判前 N 条(冒烟)")
+    ap.add_argument("--results", default=DEFAULT_RESULTS, help="输入 results jsonl")
+    ap.add_argument("--out", default=DEFAULT_OUT, help="输出 judgments jsonl")
     args = ap.parse_args()
+    results_path, out_path = Path(args.results), Path(args.out)
 
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     model = os.getenv("EVAL_JUDGE_MODEL", "claude-sonnet-4-5-20250929")
 
-    recs = [json.loads(l) for l in RESULTS.read_text(encoding="utf-8").splitlines()]
-    done = done_keys()
-    todo = [r for r in recs if (r["case_id"], r["rag"], r["wording"]) not in done]
+    recs = [json.loads(l) for l in results_path.read_text(encoding="utf-8").splitlines()]
+    done = done_keys(out_path)
+    todo = [r for r in recs
+            if (r.get("arm"), r["case_id"], r["rag"], r["wording"]) not in done]
     if args.limit:
         todo = todo[: args.limit]
     print(f"共 {len(recs)} 条,已判 {len(recs) - len(todo)},待判 {len(todo)}")
 
     tin = tout = 0
-    with open(OUT, "a", encoding="utf-8") as f:
+    with open(out_path, "a", encoding="utf-8") as f:
         for i, rec in enumerate(todo, 1):
             prompt = build_prompt(rec)
             verdict, raw = None, ""
@@ -160,6 +165,7 @@ def main() -> int:
                 except (ValueError, json.JSONDecodeError):
                     prompt += "\n\nYour previous reply was not valid JSON. Return ONLY the JSON object."
             out_rec = {
+                "arm": rec.get("arm"),
                 "case_id": rec["case_id"], "kind": rec["kind"],
                 "source_type": rec["source_type"],
                 "rag": rec["rag"], "wording": rec["wording"],
