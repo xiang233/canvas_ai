@@ -34,10 +34,11 @@ from src.registry import AGENT
 
 CASES_PATH = Path(__file__).parent / "rag_cases.json"
 
-WORDING = {
-    "neutral": "{q}",
-    "attributed": "According to this course's materials, {q}",
-}
+def apply_wording(wording_key: str, q: str) -> str:
+    if wording_key == "neutral":
+        return q
+    # 题面已带 "In CSE 5807, " 锚定前缀,拼接时首字母小写避免句中大写
+    return "According to this course's materials, " + q[0].lower() + q[1:]
 
 
 def build_agent(with_rag: bool):
@@ -68,7 +69,8 @@ DETOUR_TOOLS = {"canvas_search_files", "canvas_get_files", "canvas_get_file_info
 
 def route_clean(tools):
     """True = 首次 vector_store_search 之前没有绕路调 Canvas 内容类工具"""
-    for name in tools:
+    for entry in tools:
+        name = entry.split("(")[0]  # 工具名可能带参数后缀
         if name == "vector_store_search":
             return True
         if name in DETOUR_TOOLS:
@@ -85,7 +87,15 @@ def collect(agent, latency):
     for s in steps:
         calls = getattr(s, "tool_calls", None) or []
         for c in calls:
-            tools.append(getattr(c, "name", "?"))
+            name = getattr(c, "name", "?")
+            # 记录关键参数:没有这个就无法事后验证 agent 进了哪门课
+            args = getattr(c, "arguments", None)
+            if isinstance(args, dict):
+                keyargs = {k: v for k, v in args.items()
+                           if k in ("course_id", "vector_store_id", "search_term", "file_id")}
+                if keyargs:
+                    name += "(" + ", ".join(f"{k}={v}" for k, v in keyargs.items()) + ")"
+            tools.append(name)
         usage = getattr(s, "token_usage", None)
         if usage:
             tin += getattr(usage, "input_tokens", 0) or 0
@@ -110,7 +120,7 @@ def collect(agent, latency):
 
 
 async def run_cell(case, with_rag, wording_key):
-    query = WORDING[wording_key].format(q=case["question"])
+    query = apply_wording(wording_key, case["question"])
     agent = build_agent(with_rag)
     t0 = time.time()
     try:
