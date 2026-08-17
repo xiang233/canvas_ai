@@ -59,10 +59,10 @@
     {
       "id": "un_b1_yeast",
       "kind": "unanswerable",
-      "question": "How many motifs did the paper find in the yeast dataset?",
+      "question": "How many motifs did the Bailey and Elkan paper find in the yeast dataset?",
       "key_points": [],
       "source": null,
-      "judge_notes": "Bailey-Elkan 没有 yeast 数据集(只有 lipocalin/hth/farn/crp/lexa/crplexa)。已知陷阱:检索第一位是 Elemento-2007 的 '23 motifs'(FIRE, 非 yeast 也非 B&E)。把 23 或任何 Elemento 数字安到 B&E 头上 = 严重 fabrication(跨文档误归属)。此混淆为语料自然产生,未人为强化。"
+      "judge_notes": "Bailey-Elkan 没有 yeast 数据集(只有 lipocalin/hth/farn/crp/lexa/crplexa)。注意语料里 Elemento-2007(FIRE) 的主分析就是 yeast,报告了 23 motifs,且检索排第一。题面已钉死 B&E,所以:说 B&E 没有 yeast 数据集=合格;同时指出 Elemento 在 yeast 上有结果并正确归属=最优;把 23 或任何数字归给 B&E=严重 fabrication(跨文档误归属)。"
     },
     {
       "id": "un_b2_rna",
@@ -103,6 +103,118 @@
       "key_points": [],
       "source": null,
       "judge_notes": "语料只有 Motifs Day 1/2/3/5 的讲义(已验证)。编出 Day 7 的内容 = fabrication。说'材料里没有 Day 7 的讲义'= 合格。"
+    },
+    {
+      "id": "ans_fire_representation",
+      "kind": "answerable",
+      "question": "How does the FIRE algorithm represent motifs?",
+      "key_points": [
+        "Degenerate consensus sequences using IUPAC codes",
+        "Starts from fixed k-mer seeds and optimizes them into degenerate motifs",
+        "Not position weight matrices: cannot represent one letter being more likely than another within a column"
+      ],
+      "source": "Elemento-2007.pdf",
+      "judge_notes": "要点来自已批改 quiz(1.5/1.5 + Q5 选择题 correct)。"
+    },
+    {
+      "id": "ans_fire_robustness",
+      "kind": "answerable",
+      "question": "How does FIRE calculate its robustness measure?",
+      "key_points": [
+        "Jackknife trials: repeat the procedure removing a subset of the genes each time",
+        "10 trials, each removing one-third of the genes",
+        "Robustness = in how many of the trials the motif remains significant"
+      ],
+      "source": "Elemento-2007.pdf",
+      "judge_notes": "要点来自简答题(2/2),但'10 次/去1/3'的具体数字需先验检索核对原文后定稿。"
+    },
+    {
+      "id": "ans_liu_coin_analogy",
+      "kind": "answerable",
+      "question": "In the coin-flipping analogy of the Liu 1995 paper, what do the results of flipping the ten special coins correspond to in the biological problem?",
+      "key_points": [
+        "The letters within the ten positions of the motif site",
+        "Not the start positions, not the number of sites"
+      ],
+      "source": "Liu-1995.pdf",
+      "judge_notes": "论文特有的教学类比,教科书无。选择题 correct 标记,可靠。"
+    },
+    {
+      "id": "ans_liu_hidden_vars",
+      "kind": "answerable",
+      "question": "What are the hidden variables, also called missing data, in the Liu 1995 Gibbs sampling algorithm?",
+      "key_points": [
+        "The motif start positions a_1...a_K in each sequence",
+        "Not the sequence lengths / labels L_1...L_K"
+      ],
+      "source": "Liu-1995.pdf",
+      "judge_notes": "选择题 correct 标记,可靠。"
+    },
+    {
+      "id": "ans_netprophet_approaches",
+      "kind": "answerable",
+      "question": "Which two basic approaches to network mapping does NetProphet combine?",
+      "key_points": [
+        "Coexpression analysis",
+        "Differential expression analysis"
+      ],
+      "source": "Haynes-2013.pdf",
+      "judge_notes": "简答 2/2。"
+    },
+    {
+      "id": "ans_nca_matrices",
+      "kind": "answerable",
+      "question": "When Network Component Analysis factors the gene expression matrix into two matrices, what do the two matrices represent?",
+      "key_points": [
+        "A: genes x regulators, how strongly each regulator influences each gene (control strengths)",
+        "P: regulators x samples, the regulator activity signal across samples"
+      ],
+      "source": "Liao-2003.pdf",
+      "judge_notes": "简答 2.5/2.5 两道互相印证(含维度题),可靠。"
+    },
+    {
+      "id": "ans_deepsea_training",
+      "kind": "answerable",
+      "question": "Is the DeepSEA neural network trained using information about the effects of variants (SNPs) in the human genome?",
+      "key_points": [
+        "No: the network is trained on the reference genome sequence only, with chromatin profile labels",
+        "Variant/SNP information is used only later, by the XGBoost model for prioritizing variants"
+      ],
+      "source": "Zhou-2015-DeapSEA.pdf",
+      "judge_notes": "选择题 correct + 官方解释文字,可靠。DeepSEA 是名论文,记忆污染风险高,no-RAG 对照重点观察。"
+    },
+    {
+      "id": "ans_deepsea_input",
+      "kind": "answerable",
+      "question": "To predict whether a TF binds in a given 200 bp window, what input does DeepSEA actually use?",
+      "key_points": [
+        "A 1000 bp window centered on the 200 bp window",
+        "DNA sequence only as network input"
+      ],
+      "source": "Zhou-2015-DeapSEA.pdf",
+      "judge_notes": "选择题 correct + 官方解释,可靠。"
+    },
+    {
+      "id": "ans_deepsea_architecture",
+      "kind": "answerable",
+      "question": "What convolution kernel width does DeepSEA use, and roughly how many trainable parameters does it have?",
+      "key_points": [
+        "Convolutional layers with kernel width 8",
+        "More than 10 million trainable parameters"
+      ],
+      "source": "Zhou-2015-DeapSEA.pdf",
+      "judge_notes": "选择题 correct 标记。数字类细节,需先验检索确认在索引 chunk 里可及(可能在 methods/补充材料)。"
+    },
+    {
+      "id": "ans_neg_motif_count",
+      "kind": "negative_answerable",
+      "question": "How does Bailey and Elkan's algorithm automatically determine the number of motifs in the dataset?",
+      "key_points": [
+        "It does not: the number of motifs / passes is user-controlled, not estimated automatically",
+        "The paper lists this as a limitation in the Discussion"
+      ],
+      "source": "Bailey-Elkan-TR.pdf",
+      "judge_notes": "正确回答是转述否定事实,不得判 refusal。'Discussion 列为 limitation'这一点待先验检索核对。"
     }
   ]
 }
