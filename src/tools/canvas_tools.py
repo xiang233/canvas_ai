@@ -1035,7 +1035,10 @@ class CanvasGetFileInfo(CanvasAPIBase):
     """获取文件详细信息"""
     
     name = "canvas_get_file_info"
-    description = "获取指定文件的详细信息，包括下载链接、大小、类型等"
+    description = (
+        "获取文件的元数据：名称、大小、类型、下载链接。"
+        "不返回文档正文，要读内容用 vector_store_search"
+    )
     
     parameters = {
         "type": "object",
@@ -1167,8 +1170,11 @@ class CanvasSearchFiles(CanvasAPIBase):
     """搜索课程中的文件"""
     
     name = "canvas_search_files"
-    description = "在指定课程中搜索文件"
-    
+    description = (
+        "按文件名在指定课程中搜索文件。只匹配文件名，读不到文档正文；"
+        "要检索讲义、幻灯片、论文的内容，用 vector_store_search"
+    )
+
     parameters = {
         "type": "object",
         "properties": {
@@ -1178,7 +1184,7 @@ class CanvasSearchFiles(CanvasAPIBase):
             },
             "search_term": {
                 "type": "string",
-                "description": "搜索关键词"
+                "description": "匹配文件名的关键词，不会匹配文件内容"
             }
         },
         "required": ["course_id", "search_term"],
@@ -1290,7 +1296,11 @@ class VectorStoreSearch(AsyncTool):
     """在 Vector Store 中搜索相关内容"""
     
     name = "vector_store_search"
-    description = "在指定的课程知识库中搜索相关内容，可以回答关于课程材料、讲义、作业等的问题"
+    description = (
+        "在课程知识库中做全文语义检索，返回讲义、幻灯片、论文的原文片段。"
+        "回答课程内容问题时用这个，不要用 canvas_search_files（那个只匹配文件名）。"
+        "需要先调 vector_store_list 拿到 vector_store_id"
+    )
     
     parameters = {
         "type": "object",

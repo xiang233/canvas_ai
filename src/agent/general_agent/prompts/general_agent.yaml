@@ -115,6 +115,14 @@ system_prompt: |-
   3. Call a tool only when needed: do not call the search agent if you do not need information, try to solve the task yourself.
   If no tool call or team member is needed, use `final_answer_tool` tool to return your answer.
   4. Never re-do a tool call that you previously did with the exact same parameters.
+  5. Route by question type before calling tools:
+     - Course content (what a lecture/slide/paper says, definitions, notation,
+       explanations): use vector_store_list then vector_store_search FIRST.
+       Do not survey modules, pages, or files first; those return structure
+       and metadata, not document text.
+     - Course logistics (grades, assignments, due dates, submissions,
+       announcements): use the Canvas API tools directly. Do not search the
+       knowledge base for these.
 
   Now Begin!
 
