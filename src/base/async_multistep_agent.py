@@ -276,6 +276,13 @@ class AsyncMultiStepAgent(ABC):
             )
         self.grammar = grammar
         self.planning_interval = planning_interval
+        # 多轮上下文压缩:保留最近 N 个 step 全量,更早的 ActionStep 用 summary 序列化
+        # 并截断其 observations。0/未设置 = 关闭(默认行为不变)
+        try:
+            _keep = int(os.getenv("AGENT_MEMORY_KEEP_RECENT", "0"))
+        except ValueError:
+            _keep = 0
+        self.memory_keep_recent = _keep if _keep > 0 else None
         self.state: dict[str, Any] = {}
         self.name = self._validate_name(name)
         self.description = description
@@ -691,6 +698,29 @@ You have been provided with these additional arguments, that you can access usin
         """Interrupts the agent execution."""
         self.interrupt_switch = True
 
+    # 压缩旧 observation 时保留的开头字符数。旧轮次的检索 chunk 动辄上万字符,
+    # 是多轮 memory 膨胀的主要来源;stock summary_mode 只丢 reasoning、保留全量
+    # observations,所以单靠它压不动
+    MEMORY_OBS_CAP = 400
+
+    @staticmethod
+    def _compress_old_step_messages(step_messages: list[ChatMessage]) -> list[ChatMessage]:
+        """截断旧 ActionStep 的 observation 文本。工具调用记录(含 final_answer 的
+        答案参数)保持完整,所以跨轮引用之前的回答仍然可行。"""
+        cap = AsyncMultiStepAgent.MEMORY_OBS_CAP
+        out = []
+        for msg in step_messages:
+            content = msg.content
+            if (isinstance(content, list) and content
+                    and isinstance(content[0], dict)
+                    and isinstance(content[0].get("text"), str)
+                    and content[0]["text"].startswith("Observation:")
+                    and len(content[0]["text"]) > cap):
+                truncated = content[0]["text"][:cap] + "\n[...older observation compressed...]"
+                msg = ChatMessage(role=msg.role, content=[{"type": "text", "text": truncated}])
+            out.append(msg)
+        return out
+
     async def write_memory_to_messages(
         self,
         summary_mode: bool = False,
@@ -699,10 +729,28 @@ You have been provided with these additional arguments, that you can access usin
         Reads past llm_outputs, actions, and observations or errors from the memory into a series of messages
         that can be used as input to the LLM. Adds a number of keywords (such as PLAN, error, etc) to help
         the LLM.
+
+        当 AGENT_MEMORY_KEEP_RECENT=N 时,最近 N 个 step 全量序列化,更早的
+        ActionStep 用 summary_mode(丢 reasoning)并截断 observations。
+        TaskStep(用户的各轮问题)永远全量。
         """
         messages = self.memory.system_prompt.to_messages(summary_mode=summary_mode)
-        for memory_step in self.memory.steps:
-            messages.extend(memory_step.to_messages(summary_mode=summary_mode))
+        steps = self.memory.steps
+        keep = self.memory_keep_recent
+        cutoff = len(steps) - keep if keep is not None else 0
+        for idx, memory_step in enumerate(steps):
+            compress = (
+                keep is not None
+                and not summary_mode
+                and idx < cutoff
+                and isinstance(memory_step, ActionStep)
+            )
+            if compress:
+                messages.extend(
+                    self._compress_old_step_messages(memory_step.to_messages(summary_mode=True))
+                )
+            else:
+                messages.extend(memory_step.to_messages(summary_mode=summary_mode))
         messages.extend(self.memory.user_prompt.to_messages(summary_mode=summary_mode))
         return messages
 
