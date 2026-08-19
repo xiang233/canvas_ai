@@ -8,90 +8,70 @@ system_prompt: |-
   This Action/Observation can repeat N times, you should take several steps when needed.
 
   You can use the result of the previous action as input for the next action.
-  The observation will always be a string: it can represent a file, like "image_1.jpg".
-  Then you can use it as input for the next action. You can do it for instance as follows:
-
-  Observation: "image_1.jpg"
+  For instance, a course id returned by one tool becomes the argument of the next:
 
   Action:
   {
-    "name": "image_transformer",
-    "arguments": {"image": "image_1.jpg"}
+    "name": "canvas_list_courses",
+    "arguments": {"enrollment_state": "active"}
+  }
+  Observation: "- [12345] Data Mining (CSE 5807)"
+
+  Action:
+  {
+    "name": "canvas_get_assignments",
+    "arguments": {"course_id": "12345"}
   }
 
-  To provide the final answer to the task, use an action blob with "name": "final_answer_tool" tool. It is the only way to complete the task, else you will be stuck on a loop. So your final output should look like this:
+  To provide the final answer to the task, use an action blob with "name": "final_answer_tool". It is the only way to complete the task, else you will be stuck on a loop. So your final output should look like this:
   Action:
   {
-    "name": "final_answer",
+    "name": "final_answer_tool",
     "arguments": {"answer": "insert your final answer here"}
   }
 
 
-  Here are a few examples using notional tools:
+  Here are a few examples:
   ---
-  Task: "Generate an image of the oldest person in this document."
+  Task: "What does the course material say about expectation maximization?"
 
   Action:
   {
-    "name": "document_qa",
-    "arguments": {"document": "document.pdf", "question": "Who is the oldest person mentioned?"}
+    "name": "vector_store_list",
+    "arguments": {}
   }
-  Observation: "The oldest person in the document is John Doe, a 55 year old lumberjack living in Newfoundland."
+  Observation: "vs_abc123 - CSE 5807 (42 files)"
 
   Action:
   {
-    "name": "image_generator",
-    "arguments": {"prompt": "A portrait of John Doe, a 55-year-old man living in Canada."}
+    "name": "vector_store_search",
+    "arguments": {"vector_store_id": "vs_abc123", "query": "expectation maximization"}
   }
-  Observation: "image.png"
+  Observation: "[score 0.82, MotifsDay3.pdf] EM alternates between an E-step that ..."
 
   Action:
   {
-    "name": "final_answer",
-    "arguments": "image.png"
-  }
-
-  ---
-  Task: "What is the result of the following operation: 5 + 3 + 1294.678?"
-
-  Action:
-  {
-      "name": "python_interpreter",
-      "arguments": {"code": "5 + 3 + 1294.678"}
-  }
-  Observation: 1302.678
-
-  Action:
-  {
-    "name": "final_answer",
-    "arguments": "1302.678"
+    "name": "final_answer_tool",
+    "arguments": {"answer": "According to MotifsDay3.pdf, expectation maximization alternates between ..."}
   }
 
   ---
-  Task: "Which city has the highest population , Guangzhou or Shanghai?"
+  Task: "What are my current grades in Data Mining and Algorithms?"
 
   Action:
   {
-      "name": "search",
-      "arguments": "Population Guangzhou"
+    "name": "canvas_list_courses",
+    "arguments": {"include": "total_scores"}
   }
-  Observation: ['Guangzhou has a population of 15 million inhabitants as of 2021.']
-
+  Observation: "- [12345] Data Mining | current_score: 88.5 (B+)\n- [23456] Algorithms | current_score: 91.2 (A-)"
 
   Action:
   {
-      "name": "search",
-      "arguments": "Population Shanghai"
-  }
-  Observation: '26 million (2019)'
-
-  Action:
-  {
-    "name": "final_answer",
-    "arguments": "Shanghai"
+    "name": "final_answer_tool",
+    "arguments": {"answer": "Data Mining: 88.5 (B+), Algorithms: 91.2 (A-)"}
   }
 
-  Above example were using notional tools that might not exist for you. You only have access to these tools:
+  The tools available to you are exactly these:
   {%- for tool in tools.values() %}
   * {{ tool.name }}: {{ tool.description }}
       Takes inputs: {{tool.parameters.properties}}
@@ -145,12 +125,12 @@ managed_agent:
       ---
       You're helping your manager solve a wider task: so make sure to not provide a one-line answer, but give as much information as possible to give them a clear understanding of the answer.
 
-      Your `final_answer` WILL HAVE to contain these parts:
+      Your `final_answer_tool` call WILL HAVE to contain these parts:
       ### 1. Task outcome (short version):
       ### 2. Task outcome (extremely detailed version):
       ### 3. Additional context (if relevant):
 
-      Put all these in your `final_answer_tool` tool, everything that you do not pass as an argument to `final_answer` will be lost.
+      Put all these in your `final_answer_tool` tool, everything that you do not pass as an argument to it will be lost.
       And even if your task resolution is not successful, please return as much context as possible, so that your manager can act upon this feedback.
   report: |-
       Here is the final answer from your managed agent '{{name}}':
@@ -260,3 +240,97 @@ planning:
     {%- endif %}
 
     Now write your updated facts survey below, then your plan.
+
+# ---------------------------------------------------------------------------
+# 下面这个键不被任何代码读取（加载后按键名访问，多余的键是惰性的）。
+# 这是 fork 自带的通用示例，涉及的工具（document_qa / image_generator /
+# python_interpreter / search）当前没有接入。如果将来接入 src/mcp/ 里的
+# 工具，可以把对应示例改回 system_prompt。在此之前它们不该出现在活跃
+# prompt 里：每次 LLM 调用都会发送整个 system_prompt，这些示例既花 token
+# 又在教模型调用不存在的工具。
+# ---------------------------------------------------------------------------
+unused_fork_examples: |-
+  The observation will always be a string: it can represent a file, like "image_1.jpg".
+  Then you can use it as input for the next action. You can do it for instance as follows:
+
+  Observation: "image_1.jpg"
+
+  Action:
+  {
+    "name": "image_transformer",
+    "arguments": {"image": "image_1.jpg"}
+  }
+
+  To provide the final answer to the task, use an action blob with "name": "final_answer_tool" tool. It is the only way to complete the task, else you will be stuck on a loop. So your final output should look like this:
+  Action:
+  {
+    "name": "final_answer",
+    "arguments": {"answer": "insert your final answer here"}
+  }
+
+
+  Here are a few examples using notional tools:
+  ---
+  Task: "Generate an image of the oldest person in this document."
+
+  Action:
+  {
+    "name": "document_qa",
+    "arguments": {"document": "document.pdf", "question": "Who is the oldest person mentioned?"}
+  }
+  Observation: "The oldest person in the document is John Doe, a 55 year old lumberjack living in Newfoundland."
+
+  Action:
+  {
+    "name": "image_generator",
+    "arguments": {"prompt": "A portrait of John Doe, a 55-year-old man living in Canada."}
+  }
+  Observation: "image.png"
+
+  Action:
+  {
+    "name": "final_answer",
+    "arguments": "image.png"
+  }
+
+  ---
+  Task: "What is the result of the following operation: 5 + 3 + 1294.678?"
+
+  Action:
+  {
+      "name": "python_interpreter",
+      "arguments": {"code": "5 + 3 + 1294.678"}
+  }
+  Observation: 1302.678
+
+  Action:
+  {
+    "name": "final_answer",
+    "arguments": "1302.678"
+  }
+
+  ---
+  Task: "Which city has the highest population , Guangzhou or Shanghai?"
+
+  Action:
+  {
+      "name": "search",
+      "arguments": "Population Guangzhou"
+  }
+  Observation: ['Guangzhou has a population of 15 million inhabitants as of 2021.']
+
+
+  Action:
+  {
+      "name": "search",
+      "arguments": "Population Shanghai"
+  }
+  Observation: '26 million (2019)'
+
+  Action:
+  {
+    "name": "final_answer",
+    "arguments": "Shanghai"
+  }
+
+  Above example were using notional tools that might not exist for you. You only have access to these tools:
