@@ -16,6 +16,11 @@ from src.registry import TOOL
 # 只对瞬时故障重试：限流和服务端错误。4xx（401/403/404 等）重试无意义
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 
+# 每页条数，以及翻页的失控保护上限（100 是 Canvas 允许的最大值，
+# 用满可以少发几轮请求）
+PER_PAGE = 100
+MAX_PAGES = 20
+
 
 def _env_int(name: str, default: int) -> int:
     """读取整数环境变量，非法值回落到默认值"""
@@ -65,10 +70,17 @@ class CanvasAPIBase(AsyncTool):
         method: str,
         endpoint: str,
         params: Optional[Dict] = None,
-        data: Optional[Dict] = None
+        data: Optional[Dict] = None,
+        _return_link: bool = False,
     ) -> Dict[str, Any]:
-        """发送API请求的通用方法，对瞬时故障做指数退避重试"""
-        url = f"{self.base_url}/{endpoint}"
+        """发送API请求的通用方法，对瞬时故障做指数退避重试
+
+        _return_link 供 _fetch_all_pages 使用：额外带回 Link 头，
+        普通调用方的返回形状不变。endpoint 可以是绝对 URL（翻页时
+        Canvas 给的 next 链接就是绝对的）。
+        """
+        # 翻页拿到的 next 是绝对 URL，不能再拼 base_url
+        url = endpoint if endpoint.startswith("http") else f"{self.base_url}/{endpoint}"
         last_error = "unknown error"
 
         for attempt in range(self.max_retries + 1):
@@ -83,7 +95,15 @@ class CanvasAPIBase(AsyncTool):
                         timeout=aiohttp.ClientTimeout(total=self.timeout)
                     ) as response:
                         if response.status == 200:
-                            return await response.json()
+                            payload = await response.json()
+                            if _return_link:
+                                return {
+                                    "_data": payload,
+                                    "_next": self._next_page_url(
+                                        response.headers.get("Link", "")
+                                    ),
+                                }
+                            return payload
                         elif response.status == 404:
                             return {"error": "Resource not found"}
 
@@ -110,6 +130,60 @@ class CanvasAPIBase(AsyncTool):
                 return {"error": f"Request Error: {str(e)}"}
 
         return {"error": last_error}
+
+    @staticmethod
+    def _next_page_url(link_header: str) -> Optional[str]:
+        """从 Canvas 的 Link 头里取 rel="next" 的 URL，没有则返回 None"""
+        if not link_header:
+            return None
+        for link in link_header.split(","):
+            if 'rel="next"' in link:
+                start, end = link.find("<"), link.find(">")
+                if start != -1 and end > start:
+                    return link[start + 1:end]
+        return None
+
+    async def _fetch_all_pages(
+        self,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        max_pages: int = MAX_PAGES,
+    ) -> Any:
+        """跟随 Link 头翻完所有页。
+
+        列表端点只传 per_page 会静默截断：60 个作业的课程只回 50 个，
+        调用方看不出还有下一页。这里复用 _make_request 的重试逻辑逐页取，
+        直到没有 rel="next"。
+
+        max_pages 是失控保护，达到上限时在末尾追加一条 _truncated 标记，
+        让调用方能如实说明结果不完整，而不是又一次静默截断。
+        """
+        all_items: List[Any] = []
+        next_endpoint: Optional[str] = endpoint
+        page_params = dict(params) if params else None
+
+        for _ in range(max_pages):
+            result = await self._make_request(
+                "GET", next_endpoint, params=page_params, _return_link=True
+            )
+            if isinstance(result, dict) and "error" in result:
+                # 首页就失败：把错误如实返回。后续页失败：保留已拿到的部分
+                return result if not all_items else all_items
+
+            data = result.get("_data") if isinstance(result, dict) else result
+            if isinstance(data, list):
+                all_items.extend(data)
+            elif data is not None:
+                all_items.append(data)
+
+            next_endpoint = result.get("_next") if isinstance(result, dict) else None
+            if not next_endpoint:
+                return all_items
+            # next 链接自带查询串，重复传 params 会覆盖它的 page 参数
+            page_params = None
+
+        all_items.append({"_truncated": f"结果超过 {max_pages} 页，未取完"})
+        return all_items
 
 
 @TOOL.register_module(name="canvas_list_courses", force=True)
@@ -156,12 +230,12 @@ class CanvasListCourses(CanvasAPIBase):
         try:
             params = {
                 "enrollment_state": enrollment_state,
-                "per_page": 50
+                "per_page": PER_PAGE
             }
             if include:
                 params["include[]"] = include
             
-            result = await self._make_request("GET", "courses", params=params)
+            result = await self._fetch_all_pages("courses", params=params)
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
@@ -234,13 +308,12 @@ class CanvasGetAssignments(CanvasAPIBase):
     ) -> ToolResult:
         """获取作业列表"""
         try:
-            params = {"per_page": 50}
+            params = {"per_page": PER_PAGE}
             if include_submission:
                 params["include[]"] = "submission"
             
-            result = await self._make_request(
-                "GET", 
-                f"courses/{course_id}/assignments", 
+            result = await self._fetch_all_pages(
+                f"courses/{course_id}/assignments",
                 params=params
             )
             
@@ -378,10 +451,9 @@ class CanvasGetModules(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取模块列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/modules",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -427,10 +499,9 @@ class CanvasGetModuleItems(CanvasAPIBase):
     async def forward(self, course_id: str, module_id: str) -> ToolResult:
         """获取模块项"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/modules/{module_id}/items",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -485,12 +556,11 @@ class CanvasGetFiles(CanvasAPIBase):
     async def forward(self, course_id: str, search_term: str = "") -> ToolResult:
         """获取文件列表"""
         try:
-            params = {"per_page": 50}
+            params = {"per_page": PER_PAGE}
             if search_term:
                 params["search_term"] = search_term
             
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/files",
                 params=params
             )
@@ -535,10 +605,9 @@ class CanvasGetDiscussions(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取讨论列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/discussion_topics",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -640,12 +709,11 @@ class CanvasGetAnnouncements(CanvasAPIBase):
     async def forward(self, context_codes: str = "") -> ToolResult:
         """获取公告列表"""
         try:
-            params = {"per_page": 20}
+            params = {"per_page": PER_PAGE}
             if context_codes:
                 params["context_codes[]"] = context_codes.split(",")
             
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 "announcements",
                 params=params
             )
@@ -699,14 +767,13 @@ class CanvasGetCalendarEvents(CanvasAPIBase):
     ) -> ToolResult:
         """获取日历事件"""
         try:
-            params = {"per_page": 50}
+            params = {"per_page": PER_PAGE}
             if start_date:
                 params["start_date"] = start_date
             if end_date:
                 params["end_date"] = end_date
             
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 "calendar_events",
                 params=params
             )
@@ -807,10 +874,9 @@ class CanvasGetPages(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取页面列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/pages",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -898,10 +964,9 @@ class CanvasGetQuizzes(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取测验列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/quizzes",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -1099,10 +1164,9 @@ class CanvasGetFolders(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取文件夹列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/folders",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -1143,10 +1207,9 @@ class CanvasGetFolderFiles(CanvasAPIBase):
     async def forward(self, folder_id: str) -> ToolResult:
         """获取文件夹中的文件"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"folders/{folder_id}/files",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -1196,10 +1259,9 @@ class CanvasSearchFiles(CanvasAPIBase):
     async def forward(self, course_id: str, search_term: str) -> ToolResult:
         """搜索文件"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/files",
-                params={"search_term": search_term, "per_page": 50}
+                params={"search_term": search_term, "per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:

@@ -13,6 +13,7 @@ from evals.checks import (
     MaxActionSteps,
     MentionsAll,
     MentionsNone,
+    NoAbstention,
     NoError,
     NumericClose,
     ToolsInclude,
@@ -42,6 +43,7 @@ async def _list_courses(gt: GroundTruth):
         ToolsInclude(["canvas_list_courses"]),
         MaxActionSteps(3),
         NoError(),
+        NoAbstention(),
     ], None
 
 
@@ -56,6 +58,7 @@ async def _assignments_of_course(gt: GroundTruth):
         ToolsInclude(["canvas_list_courses", "canvas_get_assignments"]),
         MaxActionSteps(5),
         NoError(),
+        NoAbstention(),
     ], None
 
 
@@ -72,7 +75,7 @@ async def _compare_grades(gt: GroundTruth):
         return None, "可做数值断言的课程少于 2 门"
     # 不断言具体工具：拿两门课成绩既可以逐个 canvas_get_grades，
     # 也可以一次 canvas_list_courses(include=total_scores)，两条路都对
-    checks: List[Check] = [MaxActionSteps(5), NoError()]
+    checks: List[Check] = [MaxActionSteps(5), NoError(), NoAbstention()]
     for c in picks:
         score = (c.get("enrollments") or [{}])[0]["computed_current_score"]
         checks.append(NumericClose(float(score), label=f"分数 {short_name(c['name'])[:24]}"))
@@ -100,6 +103,7 @@ async def _parallel_assignments(gt: GroundTruth):
         ToolsInclude(["canvas_get_assignments"]),
         MaxActionSteps(5),
         NoError(),
+        NoAbstention(),
     ], None
 
 
@@ -119,6 +123,7 @@ async def _highest_grade(gt: GroundTruth):
         NumericClose(float(best_score), label="最高分数值"),
         MaxActionSteps(6),
         NoError(),
+        NoAbstention(),
     ], None
 
 
