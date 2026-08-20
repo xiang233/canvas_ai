@@ -18,7 +18,7 @@ growth, and correct pagination and retry behavior pinned by tests.
 
 ## Key capabilities
 
-- 26 read-only Canvas/RAG tools: courses, assignments, grades, files,
+- 23 read-only Canvas/RAG tools: courses, assignments, grades, files,
   discussions, announcements, quizzes, calendar, and semantic search
   over uploaded course materials. Write operations are disabled.
 - Conversational CLI (`canvas_chat.py`) with persistent multi-turn
