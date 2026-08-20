@@ -129,6 +129,23 @@ message resets, later ones keep it) and are evicted after
 `/ws/chat` speaks the same session model. `ALLOWED_ORIGINS` configures
 CORS (no wildcard).
 
+**Streaming.** `POST /api/chat/stream` returns Server-Sent Events, and
+`/ws/chat` pushes the identical event sequence over WebSocket: the event
+model lives in `src/agent_stream.py`, the two transports are thin
+adapters over it. Events are `session`, `token`, `tool_call`, `step`,
+`answer`, `answer_chunk`, `error`, `done`, so a client can show "calling
+canvas_list_courses" at t+4s instead of a blank screen for eight
+seconds.
+
+What actually streams is worth stating precisely: under ReAct with
+forced tool calling, the model emits tool calls rather than free text,
+so token-level reasoning deltas usually do not exist (measured: the same
+model on the same question yields 0 content deltas with tools bound and
+72 without). Progress is therefore streamed at step granularity, and the
+final answer, which arrives whole as a `final_answer_tool` argument, is
+additionally chunked into `answer_chunk` events for typewriter
+rendering. That is a rendering cadence, not a generation cadence.
+
 This is a different concurrency model from `ws_server.py`, which shares
 one process-wide agent and serializes with a single-connection lock.
 
@@ -171,6 +188,7 @@ read-only filter; a CI assertion keeps the two in sync.
     python -m tests.test_eval_checks           # 16 cases: assertion-primitive boundaries
     python -m tests.test_prompt_consistency    # 8 cases: prompt/config/MCP consistency
     python -m tests.test_api_sessions          # 9 cases: per-session agent isolation
+    python -m tests.test_streaming             # 12 cases: SSE/WebSocket event parity
 
 None of these need API keys or network. They run as a hard gate on
 every pull request (see `.github/workflows/ci.yml`, Python 3.11 and

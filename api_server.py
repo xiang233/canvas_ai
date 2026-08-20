@@ -19,6 +19,7 @@ ws_server.py 用的是进程级单例 + 单连接锁（串行化），保留不�
 """
 
 import asyncio
+import json
 import os
 import time
 import uuid
@@ -32,9 +33,11 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from configs.canvas_agent_config import agent_config
+from src.agent_stream import stream_events
 from src.models import model_manager
 from src.registry import AGENT
 from src.tools import ToolResult
@@ -134,6 +137,25 @@ class SessionManager:
             return str(result.output) if result.output is not None else ""
         return str(result)
 
+    async def ask_stream(self, session: Session, query: str):
+        """流式版的 ask。
+
+        锁必须覆盖整个生成器的生命周期，不能只包住启动：客户端读到
+        一半时另一个请求进来，会在同一份记忆上交错读写。
+
+        finally 里无条件推进 message_count，即使客户端中途断开——
+        那一轮的记忆已经写进 agent 了，不认账的话下一轮会带着
+        reset=True 把它抹掉，或者基于残缺上下文继续。
+        """
+        async with session.lock:
+            reset = session.message_count == 0
+            try:
+                async for event in stream_events(session.agent, query, reset=reset):
+                    yield event
+            finally:
+                session.message_count += 1
+                session.touch()
+
     def info(self, session_id: str) -> Optional[Dict[str, Any]]:
         s = self._sessions.get(session_id)
         if not s:
@@ -166,7 +188,12 @@ async def lifespan(app: FastAPI):
     if missing:
         print(f"[api_server] 缺少环境变量 {missing}，/api/chat 将返回 503")
     else:
-        sessions.initialize()
+        try:
+            sessions.initialize()
+        except Exception as exc:
+            # 模型配置不全时降级而不是崩：/api/health 会如实报 degraded，
+            # 聊天端点返回 503。CI 里没有 .env，起服务不该失败
+            print(f"[api_server] 模型初始化失败，降级运行: {type(exc).__name__}: {exc}")
     yield
 
 
@@ -245,6 +272,38 @@ async def chat(request: ChatRequest) -> ChatResponse:
     )
 
 
+def _sse_frame(event: Dict[str, Any]) -> str:
+    """SSE 帧：event: 行给客户端按类型分发，data: 行是 JSON 负载"""
+    return f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    """Server-Sent Events 流式回答。
+
+    浏览器端用 EventSource 或 fetch + ReadableStream 消费；
+    事件类型见 src/agent_stream.py。
+    """
+    session = await sessions.get_or_create(request.session_id)
+
+    async def body():
+        # 先把 session_id 发出去，客户端后续 follow-up 要带上它
+        yield _sse_frame({"type": "session", "session_id": session.session_id})
+        async for event in sessions.ask_stream(session, request.message):
+            yield _sse_frame(event)
+
+    return StreamingResponse(
+        body(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # nginx 之类的反代默认会缓冲，缓冲了就不是流式了
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/api/session/{session_id}")
 async def session_info(session_id: str) -> Dict[str, Any]:
     info = sessions.info(session_id)
@@ -283,15 +342,14 @@ async def websocket_chat(websocket: WebSocket) -> None:
             if session is None or payload.get("session_id") not in (None, session.session_id):
                 session = await sessions.get_or_create(payload.get("session_id"))
 
-            await websocket.send_json({"type": "status", "session_id": session.session_id})
+            await websocket.send_json({"type": "session", "session_id": session.session_id})
+            # 与 SSE 完全相同的事件序列，只是换了传输。
+            # 事件的抽象在 agent_stream 里，协议适配在这里
             try:
-                answer = await sessions.ask(session, query)
-                await websocket.send_json({
-                    "type": "response",
-                    "message": answer,
-                    "session_id": session.session_id,
-                    "message_count": session.message_count,
-                })
+                async for event in sessions.ask_stream(session, query):
+                    await websocket.send_json(event)
+            except WebSocketDisconnect:
+                raise
             except Exception as exc:
                 await websocket.send_json({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
     except WebSocketDisconnect:

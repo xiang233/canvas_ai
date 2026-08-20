@@ -420,7 +420,9 @@ You have been provided with these additional arguments, that you can access usin
 
         if stream:
             # The steps are returned as they are executed through a generator to iterate on.
-            return await self._run_stream(task=self.task, max_steps=max_steps, images=images)
+            # _run_stream is an async generator function: calling it returns the generator
+            # directly. Awaiting it raised TypeError, so this branch had never actually run.
+            return self._run_stream(task=self.task, max_steps=max_steps, images=images)
         run_start_time = time.time()
         # Outputs are returned only at the end. We only look at the last step.
 

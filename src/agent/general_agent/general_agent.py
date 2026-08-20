@@ -153,8 +153,11 @@ class GeneralAgent(AsyncMultiStepAgent):
                 )
 
                 chat_message_stream_deltas: list[ChatMessageStreamDelta] = []
+                # generate_stream 是异步生成器，必须 async for。
+                # 这条路径此前从未被执行过（服务层没有接流式），所以
+                # 同步 for 的写法一直没暴露
                 with Live("", console=self.logger.console, vertical_overflow="visible") as live:
-                    for event in output_stream:
+                    async for event in output_stream:
                         chat_message_stream_deltas.append(event)
                         live.update(
                             Markdown(agglomerate_stream_deltas(chat_message_stream_deltas).render_as_markdown())
