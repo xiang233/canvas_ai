@@ -1,0 +1,44 @@
+# Layer 1：确定性回归门禁。
+# 零 API 成本、无 secrets、不打网络 —— 所以可以安全地跑在每个 PR 上，
+# fork 来的外部 PR 也一样跑。LLM 评测在 eval.yml，只手动触发。
+name: CI
+
+on:
+  push:
+    branches: [main, samantha]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # README 声称 Python 3.11+，本地开发在 3.13。
+        # 两端都测，让这个声称是被验证的事实而不是愿望。
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+
+      - name: Install minimal test dependencies
+        run: pip install -r requirements-ci.txt
+
+      - name: Syntax gate (whole repo)
+        run: python -m compileall -q src evals tests configs
+
+      - name: Retry behavior (6 cases, scripted local server)
+        run: python -m tests.test_canvas_retry
+
+      - name: Pagination (4 cases, scripted local server)
+        run: python -m tests.test_canvas_pagination
+
+      - name: Eval assertion primitives (16 cases)
+        run: python -m tests.test_eval_checks
+
+      - name: Prompt/config consistency (5 cases, static)
+        run: python -m tests.test_prompt_consistency

@@ -1,5 +1,7 @@
 # Canvas Student Agent
 
+[![CI](https://github.com/xiang233/canvas_ai/actions/workflows/ci.yml/badge.svg?branch=samantha)](https://github.com/xiang233/canvas_ai/actions/workflows/ci.yml)
+
 A ReAct agent for Canvas LMS, tailored for student accounts: ask about
 grades, assignments, and deadlines in natural language, or ask what your
 lecture slides and course papers actually say. Content questions are
@@ -120,11 +122,16 @@ the knowledge base first:
 
 ## Tests and evals
 
-    python -m tests.test_canvas_retry        # 6 cases: retry/backoff against scripted server
-    python -m tests.test_canvas_pagination   # 4 cases: Link-header paging, partial failure
-    python -m tests.test_eval_checks         # 16 cases: assertion-primitive boundaries
+    python -m tests.test_canvas_retry          # 6 cases: retry/backoff against scripted server
+    python -m tests.test_canvas_pagination     # 4 cases: Link-header paging, partial failure
+    python -m tests.test_eval_checks           # 16 cases: assertion-primitive boundaries
+    python -m tests.test_prompt_consistency    # 5 cases: prompt vs enabled-tools consistency
 
-None of these need API keys or network. The eval suites (`evals/`) hit
+None of these need API keys or network. They run as a hard gate on
+every pull request (see `.github/workflows/ci.yml`, Python 3.11 and
+3.13). LLM behavior evals run via a manual-dispatch workflow
+(`.github/workflows/eval.yml`); the reasoning for manual-only triggering
+is documented at the top of that file. The eval suites (`evals/`) hit
 real Canvas and LLM APIs and cost money; see the docstrings in
 `evals/harness.py` and `evals/rag_experiment.py`.
 

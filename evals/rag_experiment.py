@@ -106,6 +106,8 @@ async def run_one(case, with_rag, wording):
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="只打印计划")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="最多跑几个 cell（0=全部）。CI 用小值做回归抽查，全量是研究实验")
     args = ap.parse_args()
 
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))["cases"]
@@ -114,7 +116,9 @@ async def main() -> int:
     todo = [(c, r, w) for c, r, w in plan
             if (c["id"], r, w) not in done]
 
-    print(f"cell 计划 {len(plan)} 次,已完成 {len(plan) - len(todo)},待跑 {len(todo)}")
+    if args.limit > 0:
+        todo = todo[:args.limit]
+    print(f"cell 计划 {len(plan)} 次,已完成 {len(plan) - len(todo)},本次跑 {len(todo)}")
     if args.dry:
         for c, r, w in plan:
             mark = " (done)" if (c["id"], r, w) in done else ""

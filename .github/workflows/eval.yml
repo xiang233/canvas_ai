@@ -1,0 +1,83 @@
+# Layer 2：LLM 行为评测。只手动触发（workflow_dispatch），原因：
+#   - Layer 1 的静态检查（test_prompt_consistency）已接住 prompt 类改动里
+#     最常见、最确定的失效模式，免费且每个 PR 都跑
+#   - 这是低改动频率的仓库，定时评测产出重复结果却付真实 API 成本
+#   - LLM API 订阅可能随时终止；定时任务活得比凭证长会变成永久红色，
+#     侵蚀旁边那个确定性门禁的可信度
+#   - public repo 的定时 workflow 在 60 天无 commit 后会被 GitHub 自动停用
+# 若仓库进入活跃开发或开始服务真实用户，再加 schedule。
+name: Eval (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "跑哪套评测"
+        type: choice
+        options: [canvas, rag, both]
+        default: canvas
+      redact:
+        description: "日志脱敏（public repo 保持开启）"
+        type: boolean
+        default: true
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      # key 可能已停用被删除。先探测，缺了就干净跳过（后续 step 挂条件），
+      # 而不是跑到一半烧掉部分调用再报错。
+      - id: preflight
+        env:
+          CANVAS_KEY: ${{ secrets.CANVAS_ACCESS_TOKEN }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          missing=""
+          [ -z "$CANVAS_KEY" ] && missing="$missing CANVAS_ACCESS_TOKEN"
+          [ -z "$OPENAI_KEY" ] && missing="$missing OPENAI_API_KEY"
+          if [ "${{ inputs.suite }}" != "canvas" ] && [ -z "$ANTHROPIC_KEY" ]; then
+            missing="$missing ANTHROPIC_API_KEY(judge)"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::warning::缺少 secrets:$missing —— 干净跳过，不算失败"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies
+        if: steps.preflight.outputs.ok == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Canvas golden set
+        if: steps.preflight.outputs.ok == 'true' && (inputs.suite == 'canvas' || inputs.suite == 'both')
+        env:
+          CANVAS_URL: ${{ secrets.CANVAS_URL }}
+          CANVAS_ACCESS_TOKEN: ${{ secrets.CANVAS_ACCESS_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EVAL_REDACT: ${{ inputs.redact && '1' || '0' }}
+        # baseline 单配置 6 case,几美分级。planning 对比是研究跑,不进 CI
+        run: python -m evals.harness --config baseline
+
+      - name: RAG subset
+        if: steps.preflight.outputs.ok == 'true' && (inputs.suite == 'rag' || inputs.suite == 'both')
+        env:
+          CANVAS_URL: ${{ secrets.CANVAS_URL }}
+          CANVAS_ACCESS_TOKEN: ${{ secrets.CANVAS_ACCESS_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_REDACT: ${{ inputs.redact && '1' || '0' }}
+        # 完整输出落本地文件（不上传 artifact —— public repo 登录即可下载），
+        # 日志只回显聚合行。细节本地复跑查看。
+        run: |
+          python -m evals.rag_experiment --limit 6 > rag_full.log 2>&1 || status=$?
+          grep -E "^(correct|false_refusal|attribution|通过|===|\[agg)" rag_full.log || true
+          exit ${status:-0}
