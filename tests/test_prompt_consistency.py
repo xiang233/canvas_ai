@@ -90,6 +90,22 @@ def main() -> int:
         f"存在: {has_key}；读取者: {readers}",
     )
 
+    # 6. 只读是机制不是约定：构建出的工具全部 side_effect == "read"
+    non_read = [t.name for t in agent_config["tools"]
+                if getattr(t, "side_effect", "read") != "read"]
+    check("构建出的 agent 工具全部只读", not non_read, f"漏进来的: {non_read}")
+
+    # 7. 过滤器真的在拦：模拟一个被"取消注释"的写工具，必须被丢弃
+    from configs.canvas_agent_config import read_only_tools
+
+    class FakeWriteTool:
+        name = "canvas_submit_assignment"
+        side_effect = "write"
+
+    survived = read_only_tools([FakeWriteTool()])
+    check("写工具经过构建过滤后被丢弃（取消注释也进不来）", survived == [],
+          f"过滤后仍存活: {[t.name for t in survived]}")
+
     passed = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{passed}/{len(RESULTS)} 通过\n")
     return 0 if passed == len(RESULTS) else 1

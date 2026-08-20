@@ -19,6 +19,20 @@ def _planning_interval():
     return value if value > 0 else None
 
 
+def read_only_tools(tools):
+    """只读白名单：side_effect != "read" 的工具在构建时被丢弃。
+
+    只读不能靠「把写工具注释掉」维持 —— 那是约定，谁取消注释就没了。
+    这里按 Tool.side_effect 过滤，写工具类连同它的 side_effect = "write"
+    标记一起取消注释也进不来。tests/test_prompt_consistency.py 里有断言
+    守着这个不变量，破坏它 PR 会红。
+    """
+    dropped = [t.name for t in tools if getattr(t, "side_effect", "read") != "read"]
+    if dropped:
+        print(f"[read_only_tools] 已过滤非只读工具: {dropped}")
+    return [t for t in tools if getattr(t, "side_effect", "read") == "read"]
+
+
 from src.tools.canvas_tools import (
     CanvasListCourses,
     CanvasGetAssignments,
@@ -63,7 +77,7 @@ canvas_student_agent_config = dict(
     template_path="src/agent/general_agent/prompts/general_agent.yaml",  # Prompt template path
     
     # Initialize every Canvas tool available to students
-    tools=[
+    tools=read_only_tools([
         CanvasListCourses(),              # List enrolled courses
         CanvasGetAssignments(),           # Retrieve assignments
         # CanvasSubmitAssignment(),         # Submit an assignment
@@ -89,7 +103,7 @@ canvas_student_agent_config = dict(
         VectorStoreSearch(),              # Search knowledge bases
         VectorStoreListFiles(),           # List files inside a knowledge base
         VectorStoreGetFile(),             # Read the contents of a file
-    ],
+    ]),
     
     # Customize the system prompt here or edit src/agent/general_agent/prompts/general_agent.yaml
 )
