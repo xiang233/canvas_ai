@@ -30,14 +30,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 from typing import Any, get_type_hints
 
-from huggingface_hub import (
-    CommitOperationAdd,
-    create_commit,
-    create_repo,
-    get_collection,
-    hf_hub_download,
-    metadata_update,
-)
+# huggingface_hub 只被 push_to_hub / from_hub / ToolCollection 这些 hub 路径使用，
+# 在各自函数体内按需导入，避免 import 本模块就拉起整个 hub 客户端。
 
 from src.utils import (
     _convert_type_hints_to_json_schema,
@@ -400,6 +394,8 @@ class Tool:
             create_pr (`bool`, *optional*, defaults to `False`):
                 Whether to create a PR with the uploaded files or directly commit.
         """
+        from huggingface_hub import create_commit
+
         # Initialize repository
         repo_id = self._initialize_hub_repo(repo_id, token, private)
         # Prepare files for commit
@@ -417,6 +413,8 @@ class Tool:
     @staticmethod
     def _initialize_hub_repo(repo_id: str, token: bool | str | None, private: bool | None) -> str:
         """Initialize repository on Hugging Face Hub."""
+        from huggingface_hub import create_repo, metadata_update
+
         repo_url = create_repo(
             repo_id=repo_id,
             token=token,
@@ -430,6 +428,8 @@ class Tool:
 
     def _prepare_hub_files(self) -> list:
         """Prepare files for Hub commit."""
+        from huggingface_hub import CommitOperationAdd
+
         additions = [
             # Add tool code
             CommitOperationAdd(
@@ -507,6 +507,8 @@ class Tool:
             raise ValueError(
                 "Loading a tool from Hub requires to acknowledge you trust its code: to do so, pass `trust_remote_code=True`."
             )
+
+        from huggingface_hub import hf_hub_download
 
         # Get the tool's tool.py file.
         tool_file = hf_hub_download(
@@ -905,6 +907,8 @@ class ToolCollection:
         >>> agent.run("Please draw me a picture of rivers and lakes.")
         ```
         """
+        from huggingface_hub import get_collection
+
         _collection = get_collection(collection_slug, token=token)
         _hub_repo_ids = {item.item_id for item in _collection.items if item.item_type == "space"}
 

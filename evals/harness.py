@@ -17,6 +17,7 @@ Canvas Agent eval harness.
 
 import argparse
 import asyncio
+import os
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -134,6 +135,11 @@ async def run_case(agent, case: Case, gt: GroundTruth, config_name: str) -> Case
 
 
 def print_config_report(config_name: str, results: List[CaseResult]):
+    # EVAL_REDACT=1 供 CI 使用：仓库是 public 的，Actions 日志全网可读，
+    # 而 check 的 label/detail 和错误信息里会出现真实课程名与分数。
+    # ground truth 特意不进 git，就不能从 CI 日志漏出去。
+    # 脱敏模式只输出 case_id、pass/fail 与聚合计数；细节本地复跑再看。
+    redact = os.getenv("EVAL_REDACT") == "1"
     ran = [r for r in results if not r.skipped]
     passed = [r for r in ran if r.passed]
 
@@ -146,15 +152,21 @@ def print_config_report(config_name: str, results: List[CaseResult]):
             print(f"  SKIP  {r.case_id:28} ({r.skipped})")
             continue
         if r.error:
-            print(f"  ERROR {r.case_id:28} {r.error}")
+            if redact:
+                print(f"  ERROR {r.case_id:28} (细节已脱敏，本地复跑查看)")
+            else:
+                print(f"  ERROR {r.case_id:28} {r.error}")
             continue
         mark = "PASS" if r.passed else "FAIL"
         t = r.trace
         print(f"  {mark}  {r.case_id:28} "
               f"{t.action_steps}a+{t.planning_steps}p steps  "
               f"{t.tokens_in:>6}/{t.tokens_out:<5} tok  {t.latency:5.1f}s")
-        for label, ok, detail in r.checks:
-            if not ok:
+        failed_checks = [(label, detail) for label, ok, detail in r.checks if not ok]
+        if failed_checks and redact:
+            print(f"          ✗ {len(failed_checks)} 项 check 未过（细节已脱敏，本地复跑查看）")
+        else:
+            for label, detail in failed_checks:
                 print(f"          ✗ {label}: {detail}")
 
     if not ran:

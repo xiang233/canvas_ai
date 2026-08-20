@@ -1,0 +1,10 @@
+# CI 最小依赖集：只覆盖 tests/ 下的断言测试（不打网络、不需要 API key）。
+# 在干净 venv 里实测确定：装齐这些后 26 个测试用例全部通过。
+# 完整运行时依赖见 requirements.txt。
+aiohttp>=3.9
+mmengine>=0.10.0
+pydantic>=2.0.0
+requests>=2.31
+json5>=0.9
+# pyyaml 由 mmengine 传递引入，测试直接 import yaml，显式声明以防上游变更
+pyyaml>=6.0.0
