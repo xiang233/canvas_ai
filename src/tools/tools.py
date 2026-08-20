@@ -150,6 +150,12 @@ class Tool:
     parameters: dict[str, dict[str, str | type | bool]]
     output_type: str
 
+    # 副作用分级："read"（只读，默认）或 "write"（会改变外部状态：提交作业、
+    # 发帖等）。agent 构建时按白名单过滤（见 configs/canvas_agent_config.py 的
+    # read_only_tools），CI 有断言守着这个不变量 —— 把写工具类取消注释也进不了
+    # agent，这是机制而不是约定。
+    side_effect: str = "read"
+
     def __init__(self, *args, **kwargs):
         self.is_initialized = False
 

@@ -22,7 +22,9 @@ growth, and correct pagination and retry behavior pinned by tests.
 
 - 23 read-only Canvas/RAG tools: courses, assignments, grades, files,
   discussions, announcements, quizzes, calendar, and semantic search
-  over uploaded course materials. Write operations are disabled.
+  over uploaded course materials. Write operations are excluded at
+  build time by a side-effect whitelist, with a CI assertion guarding
+  the invariant.
 - Conversational CLI (`canvas_chat.py`) with persistent multi-turn
   memory, so follow-ups like "what about the second one?" resolve
   against earlier turns.
