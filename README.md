@@ -30,6 +30,8 @@ growth, and correct pagination and retry behavior pinned by tests.
   against earlier turns.
 - Bulk file sync (`file_index_downloader.py`) with optional OpenAI
   Vector Store upload, which is what powers content-question RAG.
+- HTTP + WebSocket API (`api_server.py`) with per-session agents, so
+  concurrent users get isolated conversations; interactive docs at `/docs`.
 - WebSocket bridge (`ws_server.py`) for machine-to-machine use (see
   the status note in that section).
 - MCP server (`mcp_server.py`) exposing the same 23 read-only tools to
@@ -115,6 +117,21 @@ the knowledge base first:
     python file_index_downloader.py            # download + vector store upload
     python file_index_downloader.py --upload-only
 
+## HTTP API
+
+    python api_server.py        # 127.0.0.1:8000, docs at /docs
+
+Each session owns its own agent instance, so concurrent users never
+share conversation state; sessions carry multi-turn context (first
+message resets, later ones keep it) and are evicted after
+`API_SESSION_TTL` seconds of inactivity, capped at `API_MAX_SESSIONS`.
+`POST /api/chat` returns a `session_id` to pass back on follow-ups;
+`/ws/chat` speaks the same session model. `ALLOWED_ORIGINS` configures
+CORS (no wildcard).
+
+This is a different concurrency model from `ws_server.py`, which shares
+one process-wide agent and serializes with a single-connection lock.
+
 ## MCP server
 
 The same tool set is available over the Model Context Protocol, so
@@ -152,7 +169,8 @@ read-only filter; a CI assertion keeps the two in sync.
     python -m tests.test_canvas_retry          # 6 cases: retry/backoff against scripted server
     python -m tests.test_canvas_pagination     # 4 cases: Link-header paging, partial failure
     python -m tests.test_eval_checks           # 16 cases: assertion-primitive boundaries
-    python -m tests.test_prompt_consistency    # 5 cases: prompt vs enabled-tools consistency
+    python -m tests.test_prompt_consistency    # 8 cases: prompt/config/MCP consistency
+    python -m tests.test_api_sessions          # 9 cases: per-session agent isolation
 
 None of these need API keys or network. They run as a hard gate on
 every pull request (see `.github/workflows/ci.yml`, Python 3.11 and

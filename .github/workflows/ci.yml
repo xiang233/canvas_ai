@@ -40,5 +40,8 @@ jobs:
       - name: Eval assertion primitives (16 cases)
         run: python -m tests.test_eval_checks
 
-      - name: Prompt/config consistency (5 cases, static)
+      - name: Prompt/config consistency (8 cases, static)
         run: python -m tests.test_prompt_consistency
+
+      - name: API session isolation (9 cases, stubbed agent)
+        run: python -m tests.test_api_sessions
