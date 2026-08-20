@@ -9,7 +9,10 @@ LLM_PROVIDER=azure
 # Agent 运行参数（eval 扫参用）
 AGENT_MODEL_ID=gpt-4.1-mini
 AGENT_MAX_STEPS=15
-AGENT_PLANNING_INTERVAL=3
+# 周期性 re-planning：0 = 关闭，N = 每 N 步重新规划一次（step 1 也会触发）
+# 默认关闭：短 query（2-3 步）上实测 +56% 延迟、+29% 输入 token，准确率无变化。
+# 长链路 / 多跳任务可以设成 3 试试
+AGENT_PLANNING_INTERVAL=0
 
 # ---- Azure OpenAI Config ----
 # 注意：AGENT_MODEL_ID 和 AZURE_OPENAI_DEPLOYMENTS 里填的是 **deployment name**，不是模型名
@@ -21,16 +24,30 @@ AZURE_OPENAI_MAX_RETRIES=3
 AZURE_OPENAI_TIMEOUT=60
 
 # Open AI Config
+# Vector Store（RAG 索引与检索）用
 OPENAI_API_KEY=your_openai_api_key_here
+
+# Anthropic Config
+# 只给 eval 的 judge 用，不参与 agent 推理。
+# 跨家族评分：被测系统跑 Azure OpenAI，judge 用 Claude，避免同家族自评偏好。
+# key 在 https://console.anthropic.com 申请（与 Claude 订阅额度是两回事）
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+EVAL_JUDGE_MODEL=claude-sonnet-4-5-20250929
 
 # Log Config
 
 LOG_LEVEL=INFO
 
 # Canvas Config
+# CANVAS_URL 填学校自己的 Canvas 域名，例如 https://wustl.instructure.com
 
-CANVAS_URL=https://instituation.instructure.com/
+CANVAS_URL=https://your-school.instructure.com
 CANVAS_ACCESS_TOKEN=your_canvas_access_token_here
+
+# Canvas API 重试：只对 429/5xx 和网络超时重试，指数退避 + 抖动
+# 429 若带 Retry-After 头则优先遵循该值
+CANVAS_MAX_RETRIES=3
+CANVAS_TIMEOUT=30
 
 # WebSocket Server Config
 CANVAS_WS_SECRET=your_websocket_secret_here

@@ -6,6 +6,19 @@ Defines an agent tailored for student access to Canvas LMS with the complete Can
 
 import os
 
+
+def _planning_interval():
+    """Return the planning interval, or None when disabled (0 / empty / unset)."""
+    raw = os.getenv("AGENT_PLANNING_INTERVAL", "0").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 from src.tools.canvas_tools import (
     CanvasListCourses,
     CanvasGetAssignments,
@@ -41,7 +54,12 @@ canvas_student_agent_config = dict(
     description="Canvas LMS study assistant that helps manage courses, assignments, discussions, and more",
     model_id=os.getenv("AGENT_MODEL_ID", "gpt-4.1-mini"),  # Azure 上填 deployment name；见 .env
     max_steps=int(os.getenv("AGENT_MAX_STEPS", "15")),
-    planning_interval=int(os.getenv("AGENT_PLANNING_INTERVAL", "3")),  # Re-plan every 3 steps (planning call uses summary_mode to compress memory)
+    # Periodic re-planning. Off by default because it does not pay for itself on the
+    # short queries this agent typically gets: on a 3-query sample it cost ~+56% latency
+    # and ~+29% input tokens with no change in answer correctness, since a 2-3 step task
+    # triggers a planning call at step 1 that it never gets to amortise.
+    # Set AGENT_PLANNING_INTERVAL=3 to enable for longer, multi-hop tasks.
+    planning_interval=_planning_interval(),
     template_path="src/agent/general_agent/prompts/general_agent.yaml",  # Prompt template path
     
     # Initialize every Canvas tool available to students

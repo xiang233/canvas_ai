@@ -355,6 +355,7 @@ async def initialize_agent():
             model=model,
             tools=agent_config["tools"],
             max_steps=agent_config["max_steps"],
+            planning_interval=agent_config.get("planning_interval"),
             name=agent_config.get("name"),
             description=agent_config.get("description"),
         )
@@ -372,13 +373,19 @@ async def initialize_agent():
         return None
 
 
-async def process_query(agent, query: str):
-    """Handle a single user query."""
+async def process_query(agent, query: str, reset_memory: bool = True):
+    """Handle a single user query.
+
+    reset_memory is True only for the first turn of a session (and after
+    'clear'), so follow-up questions like "what about the second one?" can
+    still see the previous turns. AGENT_MEMORY_KEEP_RECENT compacts the older
+    steps, so a long session does not grow the prompt without bound.
+    """
     try:
         console.print("\n[bold cyan]🤔 The agent is thinking...[/bold cyan]")
-        
+
     # Execute the agent
-        result = await agent.run(query)
+        result = await agent.run(query, reset=reset_memory)
         
     # Display the result
         console.print("\n" + "=" * 70)
@@ -448,11 +455,16 @@ async def main():
             elif command == "clear":
                 os.system('cls' if os.name == 'nt' else 'clear')
                 print_banner()
+                # Clearing the screen also drops the conversation, otherwise
+                # the agent would still answer from history the user can no
+                # longer see.
+                conversation_count = 0
+                console.print("[dim]Conversation history cleared.[/dim]")
                 continue
-            
+
             # Handle standard queries
             conversation_count += 1
-            await process_query(agent, user_input)
+            await process_query(agent, user_input, reset_memory=(conversation_count == 1))
             
         except KeyboardInterrupt:
             console.print("\n\n[yellow]Detected Ctrl+C[/yellow]")

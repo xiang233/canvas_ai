@@ -5,6 +5,7 @@ Automatically download every file for each course, organize them by course and m
 and optionally upload supported files to an OpenAI Vector Store.
 """
 
+import hashlib
 import os
 import sys
 import asyncio
@@ -313,6 +314,36 @@ async def get_file_info(session, canvas_url, headers, file_id):
     except:
         pass
     return None
+
+
+def file_digest(file_path: Path) -> Optional[str]:
+    """SHA-256 of the file contents.
+
+    Canvas exposes the same file through both the files endpoint and module
+    items, so one source file lands at two local paths. Path-based checks miss
+    that, hashing the contents does not."""
+    try:
+        h = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def load_vector_store_mapping() -> dict:
+    """Read the mapping written by a previous run, so re-running reuses the
+    existing Vector Store and skips content already uploaded."""
+    mapping_path = DOWNLOAD_ROOT / "vector_stores_mapping.json"
+    if not mapping_path.exists():
+        return {}
+    try:
+        with open(mapping_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        console.print("⚠️  Existing Vector Store mapping is unreadable; treating as empty", style="yellow")
+        return {}
 
 
 def can_upload_to_vector_store(file_path: Path) -> bool:
@@ -672,39 +703,52 @@ async def main(skip_download=False):
                     total=len(course_files)
                 )
                 
-                # Persist Vector Store metadata for later
-                vector_stores_info = {}
-                
+                # Start from the previous run's mapping so re-running is a no-op
+                # for content that is already indexed
+                vector_stores_info = load_vector_store_mapping()
+
                 for course_name, files in course_files.items():
                     progress.update(upload_task, description=f"[magenta]Processing: {course_name[:40]}")
-                    
-                    # Create one Vector Store per course
-                    vector_store_id = create_vector_store_for_course(openai_client, course_name, "")
-                    
+
+                    existing = vector_stores_info.get(course_name, {})
+                    vector_store_id = existing.get("vector_store_id")
                     if vector_store_id:
-                        vector_stores_info[course_name] = {
-                            "vector_store_id": vector_store_id,
-                            "files": []
-                        }
-                        
-                        # Upload each supported file
+                        console.print(f"↻ Reusing Vector Store for {course_name[:40]}", style="dim")
+                    else:
+                        vector_store_id = create_vector_store_for_course(openai_client, course_name, "")
+
+                    if vector_store_id:
+                        entry = vector_stores_info.setdefault(course_name, {})
+                        entry["vector_store_id"] = vector_store_id
+                        uploaded = entry.setdefault("files", [])
+                        # Digests already in the store, from this run or an earlier one
+                        seen = {f["digest"] for f in uploaded if f.get("digest")}
+
                         for file_path in files:
+                            digest = file_digest(file_path)
+                            if digest and digest in seen:
+                                stats["files_upload_skipped"] += 1
+                                continue
+
                             success, file_id = upload_to_vector_store(
                                 openai_client,
                                 vector_store_id,
                                 file_path,
                                 course_name
                             )
-                            
+
                             if success:
-                                vector_stores_info[course_name]["files"].append({
+                                if digest:
+                                    seen.add(digest)
+                                uploaded.append({
                                     "path": str(file_path.relative_to(DOWNLOAD_ROOT)),
-                                    "file_id": file_id
+                                    "file_id": file_id,
+                                    "digest": digest,
                                 })
-                            
+
                             # Respect rate limits by spacing requests slightly
                             await asyncio.sleep(0.1)
-                    
+
                     progress.update(upload_task, advance=1)
                 
                 # Write Vector Store mapping to disk
@@ -803,10 +847,24 @@ if __name__ == "__main__":
         action="store_true",
         help="Alias for --upload-only"
     )
-    
+    parser.add_argument(
+        "--course-id",
+        type=int,
+        action="append",
+        metavar="ID",
+        help="Only process this course; repeat for several. Default is every course, "
+             "which for a typical account means gigabytes of media."
+    )
+
     args = parser.parse_args()
     skip_download = args.upload_only or args.skip_download
-    
+
+    if args.course_id:
+        # configure_automation already exists for programmatic callers; without this
+        # flag it was unreachable from the command line
+        configure_automation(course_ids=args.course_id, auto_confirm=True)
+        console.print(f"Restricted to course IDs: {args.course_id}", style="cyan")
+
     try:
         asyncio.run(main(skip_download=skip_download))
     except KeyboardInterrupt:

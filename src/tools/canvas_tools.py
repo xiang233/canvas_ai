@@ -5,25 +5,47 @@ Canvas LMS API 工具集 - 学生权限版本
 使用 os.environ 获取 CANVAS_ACCESS_TOKEN 和 CANVAS_URL
 """
 
+import asyncio
 import os
+import random
 import aiohttp
 from typing import Optional, List, Dict, Any
 from src.tools import AsyncTool, ToolResult
 from src.registry import TOOL
 
+# 只对瞬时故障重试：限流和服务端错误。4xx（401/403/404 等）重试无意义
+RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+
+# 每页条数，以及翻页的失控保护上限（100 是 Canvas 允许的最大值，
+# 用满可以少发几轮请求）
+PER_PAGE = 100
+MAX_PAGES = 20
+
+
+def _env_int(name: str, default: int) -> int:
+    """读取整数环境变量，非法值回落到默认值"""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
 
 class CanvasAPIBase(AsyncTool):
     """Canvas API 基类，处理通用的API调用逻辑"""
-    
+
     def __init__(self):
         super().__init__()
         self.canvas_url = os.environ.get("CANVAS_URL", "https://canvas.instructure.com")
         self.access_token = os.environ.get("CANVAS_ACCESS_TOKEN")
+        self.max_retries = _env_int("CANVAS_MAX_RETRIES", 3)
+        self.timeout = _env_int("CANVAS_TIMEOUT", 30)
         if "http://" in self.canvas_url:
             self.canvas_url = self.canvas_url.replace("http://", "https://")
         if "http" not in self.canvas_url:
             self.canvas_url = "https://" + self.canvas_url
-        
+        # 去掉结尾斜杠，否则 base_url 会拼出 //api/v1
+        self.canvas_url = self.canvas_url.rstrip("/")
+
         if not self.access_token:
             raise ValueError("未找到 CANVAS_ACCESS_TOKEN 环境变量")
         
@@ -33,35 +55,135 @@ class CanvasAPIBase(AsyncTool):
             "Content-Type": "application/json"
         }
     
+    def _backoff_delay(self, attempt: int, retry_after: Optional[str] = None) -> float:
+        """指数退避 + 随机抖动。抖动是必需的：工具调用是并发的，
+        没有抖动的话同时被限流的几个请求会在同一时刻一起重试"""
+        if retry_after:
+            try:
+                return min(float(retry_after), 30.0)
+            except ValueError:
+                pass
+        return min(0.5 * (2 ** attempt), 8.0) + random.uniform(0, 0.3)
+
     async def _make_request(
-        self, 
-        method: str, 
-        endpoint: str, 
-        params: Optional[Dict] = None, 
-        data: Optional[Dict] = None
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        data: Optional[Dict] = None,
+        _return_link: bool = False,
     ) -> Dict[str, Any]:
-        """发送API请求的通用方法"""
-        url = f"{self.base_url}/{endpoint}"
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.request(
-                    method=method,
-                    url=url,
-                    headers=self.headers,
-                    params=params,
-                    json=data,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    elif response.status == 404:
-                        return {"error": "Resource not found"}
-                    else:
+        """发送API请求的通用方法，对瞬时故障做指数退避重试
+
+        _return_link 供 _fetch_all_pages 使用：额外带回 Link 头，
+        普通调用方的返回形状不变。endpoint 可以是绝对 URL（翻页时
+        Canvas 给的 next 链接就是绝对的）。
+        """
+        # 翻页拿到的 next 是绝对 URL，不能再拼 base_url
+        url = endpoint if endpoint.startswith("http") else f"{self.base_url}/{endpoint}"
+        last_error = "unknown error"
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.request(
+                        method=method,
+                        url=url,
+                        headers=self.headers,
+                        params=params,
+                        json=data,
+                        timeout=aiohttp.ClientTimeout(total=self.timeout)
+                    ) as response:
+                        if response.status == 200:
+                            payload = await response.json()
+                            if _return_link:
+                                return {
+                                    "_data": payload,
+                                    "_next": self._next_page_url(
+                                        response.headers.get("Link", "")
+                                    ),
+                                }
+                            return payload
+                        elif response.status == 404:
+                            return {"error": "Resource not found"}
+
                         error_text = await response.text()
-                        return {"error": f"API Request Failed (Status Code {response.status}): {error_text}"}
-        except Exception as e:
-            return {"error": f"Request Error: {str(e)}"}
+                        last_error = f"API Request Failed (Status Code {response.status}): {error_text}"
+
+                        if response.status in RETRYABLE_STATUSES and attempt < self.max_retries:
+                            await asyncio.sleep(
+                                self._backoff_delay(attempt, response.headers.get("Retry-After"))
+                            )
+                            continue
+                        return {"error": last_error}
+
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                # 网络抖动/超时，可重试
+                last_error = f"Request Error: {type(e).__name__}: {e}"
+                if attempt < self.max_retries:
+                    await asyncio.sleep(self._backoff_delay(attempt))
+                    continue
+                return {"error": last_error}
+
+            except Exception as e:
+                # 非网络异常，重试无意义
+                return {"error": f"Request Error: {str(e)}"}
+
+        return {"error": last_error}
+
+    @staticmethod
+    def _next_page_url(link_header: str) -> Optional[str]:
+        """从 Canvas 的 Link 头里取 rel="next" 的 URL，没有则返回 None"""
+        if not link_header:
+            return None
+        for link in link_header.split(","):
+            if 'rel="next"' in link:
+                start, end = link.find("<"), link.find(">")
+                if start != -1 and end > start:
+                    return link[start + 1:end]
+        return None
+
+    async def _fetch_all_pages(
+        self,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        max_pages: int = MAX_PAGES,
+    ) -> Any:
+        """跟随 Link 头翻完所有页。
+
+        列表端点只传 per_page 会静默截断：60 个作业的课程只回 50 个，
+        调用方看不出还有下一页。这里复用 _make_request 的重试逻辑逐页取，
+        直到没有 rel="next"。
+
+        max_pages 是失控保护，达到上限时在末尾追加一条 _truncated 标记，
+        让调用方能如实说明结果不完整，而不是又一次静默截断。
+        """
+        all_items: List[Any] = []
+        next_endpoint: Optional[str] = endpoint
+        page_params = dict(params) if params else None
+
+        for _ in range(max_pages):
+            result = await self._make_request(
+                "GET", next_endpoint, params=page_params, _return_link=True
+            )
+            if isinstance(result, dict) and "error" in result:
+                # 首页就失败：把错误如实返回。后续页失败：保留已拿到的部分
+                return result if not all_items else all_items
+
+            data = result.get("_data") if isinstance(result, dict) else result
+            if isinstance(data, list):
+                all_items.extend(data)
+            elif data is not None:
+                all_items.append(data)
+
+            next_endpoint = result.get("_next") if isinstance(result, dict) else None
+            if not next_endpoint:
+                return all_items
+            # next 链接自带查询串，重复传 params 会覆盖它的 page 参数
+            page_params = None
+
+        all_items.append({"_truncated": f"结果超过 {max_pages} 页，未取完"})
+        return all_items
 
 
 @TOOL.register_module(name="canvas_list_courses", force=True)
@@ -69,8 +191,12 @@ class CanvasListCourses(CanvasAPIBase):
     """列出学生的所有课程"""
     
     name = "canvas_list_courses"
-    description = "获取当前学生注册的所有课程列表，包括课程名称、ID、状态等信息"
-    
+    description = (
+        "获取当前学生注册的所有课程列表，包括课程名称、ID、状态等信息。"
+        "需要跨多门课比较成绩时，传 include='total_scores' 一次拿回全部分数，"
+        "不要对每门课分别调用 canvas_get_grades。"
+    )
+
     parameters = {
         "type": "object",
         "properties": {
@@ -81,7 +207,11 @@ class CanvasListCourses(CanvasAPIBase):
             },
             "include": {
                 "type": "string",
-                "description": "包含额外信息，可选: total_students, teachers, syllabus_body",
+                "description": (
+                    "包含额外信息，可选: total_scores, total_students, teachers, syllabus_body。"
+                    "total_scores 会在每门课的 enrollments 里返回 computed_current_score 和 "
+                    "computed_current_grade，用它可以一次性拿到所有课程成绩"
+                ),
                 "nullable": True
             }
         },
@@ -100,12 +230,12 @@ class CanvasListCourses(CanvasAPIBase):
         try:
             params = {
                 "enrollment_state": enrollment_state,
-                "per_page": 50
+                "per_page": PER_PAGE
             }
             if include:
                 params["include[]"] = include
             
-            result = await self._make_request("GET", "courses", params=params)
+            result = await self._fetch_all_pages("courses", params=params)
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
@@ -122,10 +252,22 @@ class CanvasListCourses(CanvasAPIBase):
                 }
                 courses_info.append(info)
             
+            # include=total_scores 时成绩在 enrollments 里，必须渲染出来，
+            # 否则调用方看不到分数，只能退回逐门课调用 canvas_get_grades
+            lines = []
+            for c in courses_info:
+                line = f"- [{c['id']}] {c['name']} ({c['course_code']})"
+                enr = (c["enrollments"] or [{}])[0]
+                score = enr.get("computed_current_score")
+                if score is not None:
+                    grade = enr.get("computed_current_grade")
+                    line += f" | current_score: {score}"
+                    if grade:
+                        line += f" ({grade})"
+                lines.append(line)
+
             return ToolResult(
-                output=f"找到 {len(courses_info)} 门课程:\n" + 
-                       "\n".join([f"- [{c['id']}] {c['name']} ({c['course_code']})" 
-                                 for c in courses_info]),
+                output=f"找到 {len(courses_info)} 门课程:\n" + "\n".join(lines),
                 error=None
             )
             
@@ -166,13 +308,12 @@ class CanvasGetAssignments(CanvasAPIBase):
     ) -> ToolResult:
         """获取作业列表"""
         try:
-            params = {"per_page": 50}
+            params = {"per_page": PER_PAGE}
             if include_submission:
                 params["include[]"] = "submission"
             
-            result = await self._make_request(
-                "GET", 
-                f"courses/{course_id}/assignments", 
+            result = await self._fetch_all_pages(
+                f"courses/{course_id}/assignments",
                 params=params
             )
             
@@ -310,10 +451,9 @@ class CanvasGetModules(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取模块列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/modules",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -359,10 +499,9 @@ class CanvasGetModuleItems(CanvasAPIBase):
     async def forward(self, course_id: str, module_id: str) -> ToolResult:
         """获取模块项"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/modules/{module_id}/items",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -417,12 +556,11 @@ class CanvasGetFiles(CanvasAPIBase):
     async def forward(self, course_id: str, search_term: str = "") -> ToolResult:
         """获取文件列表"""
         try:
-            params = {"per_page": 50}
+            params = {"per_page": PER_PAGE}
             if search_term:
                 params["search_term"] = search_term
             
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/files",
                 params=params
             )
@@ -467,10 +605,9 @@ class CanvasGetDiscussions(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取讨论列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/discussion_topics",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -572,12 +709,11 @@ class CanvasGetAnnouncements(CanvasAPIBase):
     async def forward(self, context_codes: str = "") -> ToolResult:
         """获取公告列表"""
         try:
-            params = {"per_page": 20}
+            params = {"per_page": PER_PAGE}
             if context_codes:
                 params["context_codes[]"] = context_codes.split(",")
             
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 "announcements",
                 params=params
             )
@@ -631,14 +767,13 @@ class CanvasGetCalendarEvents(CanvasAPIBase):
     ) -> ToolResult:
         """获取日历事件"""
         try:
-            params = {"per_page": 50}
+            params = {"per_page": PER_PAGE}
             if start_date:
                 params["start_date"] = start_date
             if end_date:
                 params["end_date"] = end_date
             
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 "calendar_events",
                 params=params
             )
@@ -739,10 +874,9 @@ class CanvasGetPages(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取页面列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/pages",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -830,10 +964,9 @@ class CanvasGetQuizzes(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取测验列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/quizzes",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -967,7 +1100,10 @@ class CanvasGetFileInfo(CanvasAPIBase):
     """获取文件详细信息"""
     
     name = "canvas_get_file_info"
-    description = "获取指定文件的详细信息，包括下载链接、大小、类型等"
+    description = (
+        "获取文件的元数据：名称、大小、类型、下载链接。"
+        "不返回文档正文，要读内容用 vector_store_search"
+    )
     
     parameters = {
         "type": "object",
@@ -1028,10 +1164,9 @@ class CanvasGetFolders(CanvasAPIBase):
     async def forward(self, course_id: str) -> ToolResult:
         """获取文件夹列表"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/folders",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -1072,10 +1207,9 @@ class CanvasGetFolderFiles(CanvasAPIBase):
     async def forward(self, folder_id: str) -> ToolResult:
         """获取文件夹中的文件"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"folders/{folder_id}/files",
-                params={"per_page": 50}
+                params={"per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -1099,8 +1233,11 @@ class CanvasSearchFiles(CanvasAPIBase):
     """搜索课程中的文件"""
     
     name = "canvas_search_files"
-    description = "在指定课程中搜索文件"
-    
+    description = (
+        "按文件名在指定课程中搜索文件。只匹配文件名，读不到文档正文；"
+        "要检索讲义、幻灯片、论文的内容，用 vector_store_search"
+    )
+
     parameters = {
         "type": "object",
         "properties": {
@@ -1110,7 +1247,7 @@ class CanvasSearchFiles(CanvasAPIBase):
             },
             "search_term": {
                 "type": "string",
-                "description": "搜索关键词"
+                "description": "匹配文件名的关键词，不会匹配文件内容"
             }
         },
         "required": ["course_id", "search_term"],
@@ -1122,10 +1259,9 @@ class CanvasSearchFiles(CanvasAPIBase):
     async def forward(self, course_id: str, search_term: str) -> ToolResult:
         """搜索文件"""
         try:
-            result = await self._make_request(
-                "GET",
+            result = await self._fetch_all_pages(
                 f"courses/{course_id}/files",
-                params={"search_term": search_term, "per_page": 50}
+                params={"search_term": search_term, "per_page": PER_PAGE}
             )
             
             if isinstance(result, dict) and "error" in result:
@@ -1222,7 +1358,11 @@ class VectorStoreSearch(AsyncTool):
     """在 Vector Store 中搜索相关内容"""
     
     name = "vector_store_search"
-    description = "在指定的课程知识库中搜索相关内容，可以回答关于课程材料、讲义、作业等的问题"
+    description = (
+        "在课程知识库中做全文语义检索，返回讲义、幻灯片、论文的原文片段。"
+        "回答课程内容问题时用这个，不要用 canvas_search_files（那个只匹配文件名）。"
+        "需要先调 vector_store_list 拿到 vector_store_id"
+    )
     
     parameters = {
         "type": "object",
@@ -1665,6 +1805,87 @@ __all__ = [
     "VectorStoreSearch",
     "VectorStoreListFiles",
     "VectorStoreGetFile",
+    "CanvasReadFileContent",
 ]
+
+
+@TOOL.register_module(name="canvas_read_file_content", force=True)
+class CanvasReadFileContent(CanvasAPIBase):
+    """下载 Canvas 文件并提取正文文本(实验二 baseline 专用,不在默认工具集里)"""
+
+    name = "canvas_read_file_content"
+    description = (
+        "下载并提取指定文件的完整正文文本(支持 pdf/pptx/docx 等)。"
+        "返回该文件的全部内容,超过 50000 字符会截断并明确标注。"
+        "需要先用 canvas_search_files 或 canvas_get_files 获得 file_id"
+    )
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "file_id": {
+                "type": "string",
+                "description": "文件ID(从 canvas_search_files 或 canvas_get_files 的输出里获得)"
+            }
+        },
+        "required": ["file_id"],
+        "additionalProperties": False
+    }
+
+    output_type = "any"
+
+    MAX_CHARS = 50_000
+
+    async def forward(self, file_id: str) -> ToolResult:
+        import tempfile
+        from pathlib import Path
+
+        info = await self._make_request("GET", f"files/{file_id}")
+        if isinstance(info, dict) and "error" in info:
+            return ToolResult(output=None, error=f"获取文件信息失败: {info['error']}")
+
+        url = info.get("url")
+        display_name = info.get("display_name") or info.get("filename") or f"file-{file_id}"
+        if not url:
+            return ToolResult(output=None, error=f"文件 {display_name} 没有可用的下载链接")
+
+        suffix = Path(display_name).suffix or ".bin"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                    if resp.status != 200:
+                        return ToolResult(output=None,
+                                          error=f"下载失败 (HTTP {resp.status}): {display_name}")
+                    data = await resp.read()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return ToolResult(output=None, error=f"下载失败: {type(e).__name__}: {e}")
+
+        def _extract() -> str:
+            from markitdown import MarkItDown
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+            try:
+                return MarkItDown().convert(tmp_path).text_content
+            finally:
+                os.unlink(tmp_path)
+
+        try:
+            text = await asyncio.to_thread(_extract)
+        except Exception as e:  # noqa: BLE001 - 提取失败必须显式报错,不能静默变成空内容
+            return ToolResult(output=None,
+                              error=f"无法提取 {display_name} 的文本 ({type(e).__name__}: {e})。"
+                                    f"该格式可能不受支持")
+
+        if not text or not text.strip():
+            return ToolResult(output=None,
+                              error=f"{display_name} 提取结果为空(可能是扫描件或纯图片文件)")
+
+        header = f"文件: {display_name} (file_id={file_id}, 提取 {len(text)} 字符)\n"
+        if len(text) > self.MAX_CHARS:
+            body = text[: self.MAX_CHARS] + f"\n[truncated at {self.MAX_CHARS} chars]"
+        else:
+            body = text
+        return ToolResult(output=header + body, error=None)
 
 

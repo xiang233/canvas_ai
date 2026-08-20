@@ -103,6 +103,7 @@ async def build_agent() -> Any:
         model=model,
         tools=agent_config["tools"],
         max_steps=agent_config["max_steps"],
+        planning_interval=agent_config.get("planning_interval"),
         name=agent_config.get("name"),
         description=agent_config.get("description"),
     )
@@ -111,15 +112,26 @@ async def build_agent() -> Any:
     return _AGENT_CACHE
 
 
-async def handle_agent_query(message: Dict[str, Any]) -> Dict[str, Any]:
-    """Process a chat payload through the Canvas agent."""
+async def handle_agent_query(
+    message: Dict[str, Any],
+    reset_memory: bool = True,
+) -> Dict[str, Any]:
+    """Process a chat payload through the Canvas agent.
+
+    The agent is a process-wide singleton (_AGENT_CACHE), so memory must be
+    reset on the first query of each connection and kept afterwards: resetting
+    every turn loses follow-up context ("what about the second one?"), never
+    resetting leaks one connection's history into the next one's.
+    Old steps are compacted by AGENT_MEMORY_KEEP_RECENT, so a long
+    conversation does not grow the prompt without bound.
+    """
     agent = await build_agent()
 
     query = message.get("query")
     if not isinstance(query, str) or not query.strip():
         return {"error": "Payload must include a non-empty 'query' field."}
 
-    result = await agent.run(query)
+    result = await agent.run(query, reset=reset_memory)
     return {"answer": str(result)}
 
 
@@ -240,14 +252,15 @@ async def handle_download_request(
 
 async def handle_message(
     message: Dict[str, Any],
-    pending_courses: Optional[List[Dict[str, Any]]]
+    pending_courses: Optional[List[Dict[str, Any]]],
+    reset_memory: bool = True,
 ) -> Tuple[Dict[str, Any], Optional[List[Dict[str, Any]]]]:
     """Route messages to the appropriate handler based on type."""
 
     message_type = message.get("type") or "chat"
 
     if message_type in {"chat", "query"}:
-        return await handle_agent_query(message), pending_courses
+        return await handle_agent_query(message, reset_memory), pending_courses
 
     if message_type == "download":
         return await handle_download_request(message, pending_courses)
@@ -344,6 +357,10 @@ async def websocket_handler(websocket: WebSocketServerProtocol) -> None:
     pending_courses: Optional[List[Dict[str, Any]]] = None
     session_start_time = time.time()
     session_duration_seconds = SESSION_DURATION_MINUTES * 60
+    # The agent singleton outlives the connection, so the first query of this
+    # connection clears whatever the previous connection left in memory.
+    # Every later query keeps it, which is what makes follow-ups work.
+    memory_is_fresh = False
 
     # Reject new connection if one is already active
     async with ACTIVE_WEBSOCKET_LOCK:
@@ -370,7 +387,13 @@ async def websocket_handler(websocket: WebSocketServerProtocol) -> None:
                 continue
 
             try:
-                response, pending_courses = await handle_message(payload, pending_courses)
+                response, pending_courses = await handle_message(
+                    payload, pending_courses, reset_memory=not memory_is_fresh
+                )
+                # Only mark memory as carried-over once a query actually
+                # completed; a failed run may never have reached the reset.
+                if "answer" in response:
+                    memory_is_fresh = True
             except Exception as exc:
                 pending_courses = None
                 response = {"error": str(exc)}
