@@ -32,6 +32,9 @@ growth, and correct pagination and retry behavior pinned by tests.
   Vector Store upload, which is what powers content-question RAG.
 - WebSocket bridge (`ws_server.py`) for machine-to-machine use (see
   the status note in that section).
+- MCP server (`mcp_server.py`) exposing the same 23 read-only tools to
+  Claude Desktop and other MCP clients, behind the same side-effect
+  whitelist.
 
 ## Engineering highlights
 
@@ -111,6 +114,28 @@ the knowledge base first:
 
     python file_index_downloader.py            # download + vector store upload
     python file_index_downloader.py --upload-only
+
+## MCP server
+
+The same tool set is available over the Model Context Protocol, so
+Claude Desktop or Claude Code can query your Canvas directly:
+
+    python mcp_server.py    # stdio transport
+
+Claude Desktop config (`claude_desktop_config.json`):
+
+    {
+      "mcpServers": {
+        "canvas": {
+          "command": "python",
+          "args": ["/absolute/path/to/mcp_server.py"],
+          "env": {"CANVAS_URL": "...", "CANVAS_ACCESS_TOKEN": "...", "OPENAI_API_KEY": "..."}
+        }
+      }
+    }
+
+The server registers exactly the tools the agent uses, after the
+read-only filter; a CI assertion keeps the two in sync.
 
 ## Configuration knobs
 
