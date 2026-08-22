@@ -32,7 +32,9 @@ from typing import TYPE_CHECKING, Any, Callable, TypedDict, Union, Literal, Type
 
 import jinja2
 import yaml
-from huggingface_hub import create_repo, metadata_update, snapshot_download, upload_folder
+# huggingface_hub 只服务 from_hub / push_to_hub 这类 fork 遗留路径，Canvas
+# 运行时不用。放在函数体内 import，避免它挂在导入热路径上（与 tools.py
+# 里同样的处理保持一致）
 from jinja2 import StrictUndefined, Template
 from rich.console import Group
 from rich.live import Live
@@ -401,6 +403,11 @@ You have been provided with these additional arguments, that you can access usin
         self.memory.system_prompt = SystemPromptStep(system_prompt=self.system_prompt)
         self.user_prompt = self.initialize_user_prompt()
         self.memory.user_prompt = UserPromptStep(user_prompt=self.user_prompt)
+
+        # 重复调用签名是"本次 run 内"的状态，无论是否 reset 记忆都要清空：
+        # 跨轮重复提问合理，只有同一次推理里反复打同一调用才是死循环
+        if hasattr(self, "_call_signatures"):
+            self._call_signatures.clear()
 
         if reset:
             self.memory.reset()
@@ -1131,6 +1138,8 @@ You have been provided with these additional arguments, that you can access usin
             if key in kwargs
         }
 
+        from huggingface_hub import snapshot_download
+
         download_folder = Path(snapshot_download(repo_id=repo_id, **download_kwargs))
         return cls.from_folder(download_folder, **kwargs)
 
@@ -1191,6 +1200,8 @@ You have been provided with these additional arguments, that you can access usin
             create_pr (`bool`, *optional*, defaults to `False`):
                 Whether to create a PR with the uploaded files or directly commit.
         """
+        from huggingface_hub import create_repo, metadata_update, upload_folder
+
         repo_url = create_repo(
             repo_id=repo_id,
             token=token,

@@ -87,6 +87,11 @@ class GeneralAgent(AsyncMultiStepAgent):
         # Tool calling setup
         self.max_tool_threads = max_tool_threads
 
+        # 本次 run 内已执行过的 (工具, 参数) 签名，用于短路重复调用。
+        # 每次 run 开始时清空：跨轮重复提问是合理的，只有同一次推理里
+        # 反复打同一个调用才是死循环
+        self._call_signatures: set = set()
+
         self.memory = AgentMemory(
             system_prompt=self.system_prompt,
             user_prompt=self.user_prompt,
@@ -235,6 +240,28 @@ class GeneralAgent(AsyncMultiStepAgent):
             )
             if tool_arguments is None:
                 tool_arguments = {}
+
+            # 重复调用短路。prompt 里那条“不要重复相同调用”只是约定，没有
+            # 机制兜底：模型如果认为结果不对（例如工具没渲染出它要的字段），
+            # 会一遍遍重试同一个调用直到耗尽步数——实测空转 15 次、烧掉
+            # 46 万 token。这里第二次遇到相同 (工具, 参数) 就不再打 API，
+            # 直接回一条明确指令，把“再试一次”这条路堵死。
+            signature = (tool_name, json.dumps(tool_arguments, sort_keys=True, default=str))
+            if signature in self._call_signatures:
+                self.logger.log(
+                    f"Repeated call to '{tool_name}' with identical arguments; short-circuited.",
+                    level=LogLevel.INFO,
+                )
+                return (
+                    f"[repeated call] '{tool_name}' was already called with exactly these "
+                    f"arguments in this run and returned the result you already have. "
+                    f"Calling it again will not produce anything new. Either use a "
+                    f"different tool or different arguments, or answer with "
+                    f"final_answer_tool using what you have, stating plainly what you "
+                    f"could not find."
+                )
+            self._call_signatures.add(signature)
+
             tool_call_result = await self.execute_tool_call(tool_name, tool_arguments)
             tool_call_result_type = type(tool_call_result)
             if tool_call_result_type in [AgentImage, AgentAudio]:

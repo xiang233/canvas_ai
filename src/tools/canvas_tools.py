@@ -8,6 +8,7 @@ Canvas LMS API 工具集 - 学生权限版本
 import asyncio
 import os
 import random
+import re
 import aiohttp
 from typing import Optional, List, Dict, Any
 from src.tools import AsyncTool, ToolResult
@@ -248,12 +249,17 @@ class CanvasListCourses(CanvasAPIBase):
                     "name": course.get("name"),
                     "course_code": course.get("course_code"),
                     "workflow_state": course.get("workflow_state"),
-                    "enrollments": course.get("enrollments", [])
+                    "enrollments": course.get("enrollments", []),
+                    "teachers": course.get("teachers", []),
+                    "syllabus_body": course.get("syllabus_body"),
                 }
                 courses_info.append(info)
             
-            # include=total_scores 时成绩在 enrollments 里，必须渲染出来，
-            # 否则调用方看不到分数，只能退回逐门课调用 canvas_get_grades
+            # 每种 include 拿到的数据都必须渲染出来。schema 里声明支持某个
+            # include 却不渲染它，等于对调用方撒谎：模型看不到自己要的字段，
+            # 会以为参数传错了而反复重试同一个调用——实测这样能空转 15 次、
+            # 烧掉 46 万 token 直到撞上步数上限。
+            # total_scores 当初就是这么修的，teachers / syllabus_body 是后补的。
             lines = []
             for c in courses_info:
                 line = f"- [{c['id']}] {c['name']} ({c['course_code']})"
@@ -264,6 +270,19 @@ class CanvasListCourses(CanvasAPIBase):
                     line += f" | current_score: {score}"
                     if grade:
                         line += f" ({grade})"
+                if c.get("teachers"):
+                    names = ", ".join(
+                        t.get("display_name") or t.get("name") or str(t.get("id"))
+                        for t in c["teachers"]
+                    )
+                    line += f" | teachers: {names}"
+                if c.get("syllabus_body"):
+                    # syllabus 是 HTML，整段塞进 observation 会挤爆上下文。
+                    # 去标签后截断，需要全文用 canvas_get_page_content
+                    text = re.sub(r"<[^>]+>", " ", c["syllabus_body"])
+                    text = re.sub(r"\s+", " ", text).strip()
+                    if text:
+                        line += f" | syllabus: {text[:300]}"
                 lines.append(line)
 
             return ToolResult(

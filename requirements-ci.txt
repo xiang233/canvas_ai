@@ -1,5 +1,5 @@
 # CI 最小依赖集：只覆盖 tests/ 下的断言测试（不打网络、不需要 API key）。
-# 在干净 venv 里实测确定：装齐这些后 55 个测试用例全部通过。
+# 在干净 venv 里实测确定：装齐这些后 67 个测试用例全部通过。
 # 完整运行时依赖见 requirements.txt。
 aiohttp>=3.9
 mmengine>=0.10.0
@@ -13,3 +13,5 @@ fastapi>=0.110.0
 python-dotenv>=1.0.0
 # TestClient 走 SSE/WebSocket 需要（starlette 的测试客户端依赖它）
 httpx2
+# 导入 GeneralAgent 时需要（prompt 模板渲染），此前靠传递依赖混入
+jinja2>=3.0.0
