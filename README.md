@@ -189,7 +189,7 @@ read-only filter; a CI assertion keeps the two in sync.
     python -m tests.test_prompt_consistency    # 8 cases: prompt/config/MCP consistency
     python -m tests.test_api_sessions          # 9 cases: per-session agent isolation
     python -m tests.test_streaming             # 12 cases: SSE/WebSocket event parity
-    python -m tests.test_loop_protection       # 15 cases: repeated-call short circuit, observation rendering
+    python -m tests.test_loop_protection       # 20 cases: short circuit, render/error fidelity
 
 None of these need API keys or network. They run as a hard gate on
 every pull request (see `.github/workflows/ci.yml`, Python 3.11 and

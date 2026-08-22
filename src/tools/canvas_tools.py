@@ -106,10 +106,14 @@ class CanvasAPIBase(AsyncTool):
                                 }
                             return payload
                         elif response.status == 404:
-                            return {"error": "Resource not found"}
+                            # 忠实转述,不解读:哪个端点、什么状态码是模型推断的
+                            # 原料。这个 API 的 404 往往不是"资源不存在"(比如
+                            # 未启用某功能的课),具体含义写在各工具的 description
+                            # 里,解读交给模型
+                            return {"error": f"HTTP 404 Not Found: {method} {url}"}
 
                         error_text = await response.text()
-                        last_error = f"API Request Failed (Status Code {response.status}): {error_text}"
+                        last_error = f"HTTP {response.status}: {method} {url}: {error_text[:300]}"
 
                         if response.status in RETRYABLE_STATUSES and attempt < self.max_retries:
                             await asyncio.sleep(
@@ -131,6 +135,21 @@ class CanvasAPIBase(AsyncTool):
                 return {"error": f"Request Error: {str(e)}"}
 
         return {"error": last_error}
+
+    @staticmethod
+    def render_list(title: str, items: List[Any], line_fn, scope: str = "") -> str:
+        """列表统一渲染：永远报条数，空了就明说"共 0 条"。
+
+        空结果只输出标题的话，模型分不清"没有数据"和"工具没干活"，会陷入
+        重试（教授名字/公告/todo 三次事故同一个成因）。这里只陈述事实——
+        条数和查询范围；"接下来该怎么办"的知识在各工具的 description 里，
+        推断是模型的事。
+        """
+        scope_note = f"（{scope}）" if scope else ""
+        if not items:
+            return f"{title}{scope_note}: 共 0 条。"
+        body = "\n".join(line_fn(x) for x in items)
+        return f"{title}{scope_note}: 共 {len(items)} 条\n{body}"
 
     @staticmethod
     def _next_page_url(link_header: str) -> Optional[str]:
@@ -299,7 +318,11 @@ class CanvasGetAssignments(CanvasAPIBase):
     """获取课程的作业列表"""
     
     name = "canvas_get_assignments"
-    description = "获取指定课程的所有作业，包括作业名称、截止日期、分数等信息"
+    description = (
+        "获取指定课程的所有作业，包括名称、截止日期、分数与提交状态。"
+        "测验型作业（online_quiz / New Quizzes）也出现在这里——"
+        "canvas_get_quizzes 返回 404 或为空时，测验通常能在这份列表里找到。"
+    )
     
     parameters = {
         "type": "object",
@@ -477,13 +500,11 @@ class CanvasGetModules(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = f"课程 {course_id} 的模块结构:\n"
-            for module in result:
-                output += f"\n📚 模块 [{module.get('id')}]: {module.get('name')}\n"
-                output += f"   状态: {module.get('workflow_state')}\n"
-                output += f"   项目数: {module.get('items_count', 0)}\n"
-            
+
+            output = self.render_list(
+                f"课程 {course_id} 的模块", result,
+                lambda m: f"📚 [{m.get('id')}] {m.get('name')} | 状态: {m.get('workflow_state')} | 项目数: {m.get('items_count', 0)}",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -525,21 +546,13 @@ class CanvasGetModuleItems(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = f"模块 {module_id} 的内容:\n"
-            for item in result:
-                icon = {
-                    "Assignment": "📝",
-                    "Page": "📄",
-                    "File": "📁",
-                    "Discussion": "💬",
-                    "Quiz": "✏️",
-                    "ExternalUrl": "🔗",
-                    "ExternalTool": "🔧"
-                }.get(item.get("type"), "•")
-                
-                output += f"{icon} [{item.get('id')}] {item.get('title')} ({item.get('type')})\n"
-            
+
+            _icons = {"Assignment": "📝", "Page": "📄", "File": "📁", "Discussion": "💬",
+                      "Quiz": "✏️", "ExternalUrl": "🔗", "ExternalTool": "🔧"}
+            output = self.render_list(
+                f"模块 {module_id} 的内容", result,
+                lambda i: f"{_icons.get(i.get('type'), '•')} [{i.get('id')}] {i.get('title')} ({i.get('type')})",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -551,7 +564,11 @@ class CanvasGetFiles(CanvasAPIBase):
     """获取课程文件列表"""
     
     name = "canvas_get_files"
-    description = "获取指定课程的所有文件和资源"
+    description = (
+        "获取课程的文件列表。Canvas 的脾气：教师把 Files 标签设为学生不可见时，"
+        "此端点返回 HTTP 403——不代表没有材料，课程材料可能在 modules 或课程知识库"
+        "（vector_store_search）里。"
+    )
     
     parameters = {
         "type": "object",
@@ -586,14 +603,11 @@ class CanvasGetFiles(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = f"课程 {course_id} 的文件:\n"
-            for file in result:
-                size_mb = file.get("size", 0) / (1024 * 1024)
-                output += f"📁 [{file.get('id')}] {file.get('display_name')} "
-                output += f"({size_mb:.2f}MB, {file.get('content-type', '未知类型')})\n"
-                output += f"   URL: {file.get('url')}\n"
-            
+
+            output = self.render_list(
+                f"课程 {course_id} 的文件", result,
+                lambda f: f"📁 [{f.get('id')}] {f.get('display_name')} ({f.get('size', 0) / 1048576:.2f}MB, {f.get('content-type', '未知类型')}) URL: {f.get('url')}",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -631,13 +645,11 @@ class CanvasGetDiscussions(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = f"课程 {course_id} 的讨论:\n"
-            for topic in result:
-                output += f"💬 [{topic.get('id')}] {topic.get('title')}\n"
-                output += f"   发布时间: {topic.get('posted_at', '未知')}\n"
-                output += f"   回复数: {topic.get('discussion_subentry_count', 0)}\n"
-            
+
+            output = self.render_list(
+                f"课程 {course_id} 的讨论", result,
+                lambda t: f"💬 [{t.get('id')}] {t.get('title')} | 发布: {t.get('posted_at', '未知')} | 回复数: {t.get('discussion_subentry_count', 0)}",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -767,24 +779,14 @@ class CanvasGetAnnouncements(CanvasAPIBase):
                 return ToolResult(output=None, error=result["error"])
 
             window = f"{params['start_date']} 至 {params['end_date']}"
-            if not result:
-                # 空结果必须明确说"零条"并给出查询窗口——只渲染一个标题
-                # 会让模型分不清"没有公告"和"工具没干活"，进而重试
-                return ToolResult(
-                    output=(
-                        f"该时间范围（{window}）内没有公告。"
-                        f"如需更早的公告，传 start_date 扩大范围。"
-                    ),
-                    error=None,
-                )
-
             result.sort(key=lambda a: a.get("posted_at") or "", reverse=True)
-            output = f"📢 共 {len(result)} 条公告（{window}，从新到旧）:\n"
-            for announcement in result:
-                output += f"\n标题: {announcement.get('title')}\n"
-                output += f"发布时间: {announcement.get('posted_at', '未知')}\n"
-                output += f"内容: {(announcement.get('message') or '无内容')[:200]}...\n"
-
+            # 只陈述事实:条数、窗口、逐条内容。"近期没有该不该主动说明"
+            # 这类行为由模型根据窗口信息自行判断
+            output = self.render_list(
+                "📢 公告", result,
+                lambda a: f"标题: {a.get('title')} | 发布: {a.get('posted_at', '未知')} | 内容: {(a.get('message') or '无内容')[:200]}...",
+                scope=f"{window}，从新到旧",
+            )
             return ToolResult(output=output, error=None)
 
         except Exception as e:
@@ -796,7 +798,10 @@ class CanvasGetCalendarEvents(CanvasAPIBase):
     """获取日历事件"""
     
     name = "canvas_get_calendar_events"
-    description = "获取学生的日历事件，包括课程活动、作业截止日期等"
+    description = (
+        "获取日历事件。Canvas 的脾气：不传日期时默认只返回今天的事件，"
+        "查任何历史或未来日程都必须显式传 start_date / end_date。"
+    )
     
     parameters = {
         "type": "object",
@@ -838,15 +843,14 @@ class CanvasGetCalendarEvents(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = "📅 日历事件:\n"
-            for event in result:
-                output += f"\n🗓️ {event.get('title')}\n"
-                output += f"   时间: {event.get('start_at', '未知')}\n"
-                output += f"   类型: {event.get('type', '未知')}\n"
-                if event.get('description'):
-                    output += f"   描述: {event.get('description')[:100]}...\n"
-            
+
+            output = self.render_list(
+                "📅 日历事件", result,
+                lambda e: (
+                    f"🗓️ {e.get('title')} | 时间: {e.get('start_at', '未知')} | 类型: {e.get('type', '未知')}"
+                    + (f" | 描述: {e.get('description')[:100]}..." if e.get('description') else "")
+                ),
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -858,7 +862,10 @@ class CanvasGetGrades(CanvasAPIBase):
     """获取课程成绩"""
     
     name = "canvas_get_grades"
-    description = "获取学生在指定课程中的成绩信息"
+    description = (
+        "获取学生在单门课程中的成绩。要跨多门课比较成绩时，"
+        "用 canvas_list_courses(include='total_scores') 一次拿全，不要逐门调用本工具。"
+    )
     
     parameters = {
         "type": "object",
@@ -893,15 +900,16 @@ class CanvasGetGrades(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = f"课程 {course_id} 的成绩:\n"
-            for enrollment in result:
-                grades = enrollment.get("grades", {})
-                output += f"📊 当前成绩: {grades.get('current_grade', '暂无')}\n"
-                output += f"   当前分数: {grades.get('current_score', '暂无')}\n"
-                output += f"   最终成绩: {grades.get('final_grade', '暂无')}\n"
-                output += f"   最终分数: {grades.get('final_score', '暂无')}\n"
-            
+
+            output = self.render_list(
+                f"课程 {course_id} 的成绩", result,
+                lambda en: (
+                    f"📊 当前成绩: {en.get('grades', {}).get('current_grade', '暂无')}"
+                    f" | 当前分数: {en.get('grades', {}).get('current_score', '暂无')}"
+                    f" | 最终成绩: {en.get('grades', {}).get('final_grade', '暂无')}"
+                    f" | 最终分数: {en.get('grades', {}).get('final_score', '暂无')}"
+                ),
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -913,7 +921,10 @@ class CanvasGetPages(CanvasAPIBase):
     """获取课程页面列表"""
     
     name = "canvas_get_pages"
-    description = "获取指定课程的所有页面（Wiki页面）"
+    description = (
+        "获取课程的 Wiki 页面列表。Canvas 的脾气：未启用 Pages 功能的课程"
+        "此端点返回 HTTP 404，不代表课程不存在。"
+    )
     
     parameters = {
         "type": "object",
@@ -939,13 +950,11 @@ class CanvasGetPages(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = f"课程 {course_id} 的页面:\n"
-            for page in result:
-                output += f"📄 {page.get('title')}\n"
-                output += f"   URL: {page.get('url')}\n"
-                output += f"   更新时间: {page.get('updated_at', '未知')}\n"
-            
+
+            output = self.render_list(
+                f"课程 {course_id} 的页面", result,
+                lambda p: f"📄 {p.get('title')} | URL: {p.get('url')} | 更新: {p.get('updated_at', '未知')}",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -1003,7 +1012,11 @@ class CanvasGetQuizzes(CanvasAPIBase):
     """获取课程测验列表"""
     
     name = "canvas_get_quizzes"
-    description = "获取指定课程的所有测验"
+    description = (
+        "获取指定课程的经典测验列表，按截止时间从新到旧。"
+        "Canvas 的脾气：未启用经典测验功能的课程，此端点返回 HTTP 404——"
+        "不代表课程不存在；这类课程的测验类作业会出现在 canvas_get_assignments 里。"
+    )
     
     parameters = {
         "type": "object",
@@ -1028,15 +1041,16 @@ class CanvasGetQuizzes(CanvasAPIBase):
             )
             
             if isinstance(result, dict) and "error" in result:
+                # 错误原样透传(含方法+URL+状态码)。404 在这个端点的含义
+                # 写在 description 里,解读交给模型
                 return ToolResult(output=None, error=result["error"])
-            
-            output = f"课程 {course_id} 的测验:\n"
-            for quiz in result:
-                output += f"✏️ [{quiz.get('id')}] {quiz.get('title')}\n"
-                output += f"   类型: {quiz.get('quiz_type', '未知')}\n"
-                output += f"   分数: {quiz.get('points_possible', 0)}\n"
-                output += f"   截止时间: {quiz.get('due_at', '无截止时间')}\n"
-            
+
+            result.sort(key=lambda q: q.get("due_at") or "", reverse=True)
+            output = self.render_list(
+                f"课程 {course_id} 的测验", result,
+                lambda q: f"✏️ [{q.get('id')}] {q.get('title')} | 类型: {q.get('quiz_type', '未知')} | 分数: {q.get('points_possible', 0)} | 截止: {q.get('due_at', '无截止时间')}",
+                scope="按截止时间从新到旧",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -1048,7 +1062,11 @@ class CanvasGetTodoItems(CanvasAPIBase):
     """获取待办事项"""
     
     name = "canvas_get_todo_items"
-    description = "获取学生的待办事项列表，包括即将到期的作业和任务"
+    description = (
+        "获取学生的待办事项。Canvas 的 todo 只包含未完成的近期任务，"
+        "只看未来——已结课课程的内容永远不在这里，返回 0 条是正常现象。"
+        "查历史作业用 canvas_get_assignments，查成绩用 canvas_get_grades。"
+    )
     
     parameters = {
         "type": "object",
@@ -1066,15 +1084,16 @@ class CanvasGetTodoItems(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = "📝 待办事项:\n"
-            for item in result:
-                assignment = item.get("assignment", {})
-                output += f"\n• {assignment.get('name', '未知任务')}\n"
-                output += f"  课程: {item.get('context_name', '未知')}\n"
-                output += f"  截止: {assignment.get('due_at', '无截止时间')}\n"
-                output += f"  分数: {assignment.get('points_possible', 0)}\n"
-            
+
+            output = self.render_list(
+                "📝 待办事项", result,
+                lambda i: (
+                    f"• {i.get('assignment', {}).get('name', '未知任务')}"
+                    f" | 课程: {i.get('context_name', '未知')}"
+                    f" | 截止: {i.get('assignment', {}).get('due_at', '无截止时间')}"
+                    f" | 分数: {i.get('assignment', {}).get('points_possible', 0)}"
+                ),
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -1086,7 +1105,10 @@ class CanvasGetUpcomingEvents(CanvasAPIBase):
     """获取即将到来的事件"""
     
     name = "canvas_get_upcoming_events"
-    description = "获取学生即将到来的所有事件和活动"
+    description = (
+        "获取即将到来的事件。此端点只看未来，结课后通常为 0 条。"
+        "查过去的日程用 canvas_get_calendar_events 并显式传日期范围。"
+    )
     
     parameters = {
         "type": "object",
@@ -1104,13 +1126,11 @@ class CanvasGetUpcomingEvents(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = "🗓️ 即将到来的事件:\n"
-            for event in result:
-                output += f"\n• {event.get('title', '未知事件')}\n"
-                output += f"  时间: {event.get('start_at', '未知')}\n"
-                output += f"  类型: {event.get('type', '未知')}\n"
-            
+
+            output = self.render_list(
+                "🗓️ 即将到来的事件", result,
+                lambda e: f"• {e.get('title', '未知事件')} | 时间: {e.get('start_at', '未知')} | 类型: {e.get('type', '未知')}",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -1140,13 +1160,11 @@ class CanvasGetGroups(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = "👥 我的小组:\n"
-            for group in result:
-                output += f"\n• [{group.get('id')}] {group.get('name')}\n"
-                output += f"  成员数: {group.get('members_count', 0)}\n"
-                output += f"  课程: {group.get('course_id', '未知')}\n"
-            
+
+            output = self.render_list(
+                "👥 我的小组", result,
+                lambda g: f"• [{g.get('id')}] {g.get('name')} | 成员数: {g.get('members_count', 0)} | 课程: {g.get('course_id', '未知')}",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -1229,12 +1247,11 @@ class CanvasGetFolders(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = f"📂 课程 {course_id} 的文件夹:\n"
-            for folder in result:
-                output += f"• [{folder.get('id')}] {folder.get('full_name')}\n"
-                output += f"  文件数: {folder.get('files_count', 0)}\n"
-            
+
+            output = self.render_list(
+                f"📂 课程 {course_id} 的文件夹", result,
+                lambda fo: f"• [{fo.get('id')}] {fo.get('full_name')} | 文件数: {fo.get('files_count', 0)}",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -1272,14 +1289,11 @@ class CanvasGetFolderFiles(CanvasAPIBase):
             
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = f"📂 文件夹 {folder_id} 中的文件:\n"
-            for file in result:
-                size_mb = file.get('size', 0) / (1024 * 1024)
-                output += f"📄 [{file.get('id')}] {file.get('display_name')}\n"
-                output += f"   大小: {size_mb:.2f} MB\n"
-                output += f"   类型: {file.get('content-type', '未知')}\n"
-            
+
+            output = self.render_list(
+                f"📂 文件夹 {folder_id} 中的文件", result,
+                lambda f: f"📄 [{f.get('id')}] {f.get('display_name')} | {f.get('size', 0) / 1048576:.2f}MB | {f.get('content-type', '未知')}",
+            )
             return ToolResult(output=output, error=None)
             
         except Exception as e:
@@ -1325,15 +1339,10 @@ class CanvasSearchFiles(CanvasAPIBase):
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
             
-            output = f"🔍 搜索 '{search_term}' 的结果:\n"
-            if len(result) == 0:
-                output += "未找到匹配的文件"
-            else:
-                for file in result:
-                    output += f"\n📄 {file.get('display_name')}\n"
-                    output += f"   文件ID: {file.get('id')}\n"
-                    output += f"   大小: {file.get('size', 0) / 1024:.2f} KB\n"
-                    output += f"   下载: {file.get('url')}\n"
+            output = self.render_list(
+                f"🔍 搜索 '{search_term}' 的结果", result,
+                lambda f: f"📄 [{f.get('id')}] {f.get('display_name')} | {f.get('size', 0) / 1024:.2f}KB | 下载: {f.get('url')}",
+            )
             
             return ToolResult(output=output, error=None)
             
