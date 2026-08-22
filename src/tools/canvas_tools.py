@@ -705,11 +705,16 @@ class CanvasGetDiscussions(CanvasAPIBase):
 
 @TOOL.register_module(name="canvas_get_announcements", force=True)
 class CanvasGetAnnouncements(CanvasAPIBase):
-    """获取课程公告"""
-    
+    """获取公告"""
+
     name = "canvas_get_announcements"
-    description = "获取所有课程的最新公告"
-    
+    description = (
+        "获取课程公告，按发布时间从新到旧排列。"
+        "默认回看最近一年——Canvas 这个端点不传日期时只返回最近 14 天，"
+        "结课后的课程用默认值永远查不到东西，所以这里把窗口放宽了。"
+        "要查更早的公告，显式传 start_date。"
+    )
+
     parameters = {
         "type": "object",
         "properties": {
@@ -717,37 +722,71 @@ class CanvasGetAnnouncements(CanvasAPIBase):
                 "type": "string",
                 "description": "课程ID列表，格式: course_123,course_456（可选，留空则获取所有课程）",
                 "nullable": True
+            },
+            "start_date": {
+                "type": "string",
+                "description": "起始日期 YYYY-MM-DD（可选，默认一年前）",
+                "nullable": True
+            },
+            "end_date": {
+                "type": "string",
+                "description": "结束日期 YYYY-MM-DD（可选，默认明天）",
+                "nullable": True
             }
         },
         "required": [],
         "additionalProperties": False
     }
-    
+
     output_type = "any"
-    
-    async def forward(self, context_codes: str = "") -> ToolResult:
+
+    async def forward(
+        self,
+        context_codes: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ) -> ToolResult:
         """获取公告列表"""
+        from datetime import datetime, timedelta, timezone
+
         try:
-            params = {"per_page": PER_PAGE}
+            # Canvas 的隐藏默认：start_date=14 天前，end_date=28 天后。
+            # 学期进行中恰好够用，结课后的课程永远查不到——默认放宽到一年
+            now = datetime.now(timezone.utc)
+            params = {
+                "per_page": PER_PAGE,
+                "start_date": start_date or (now - timedelta(days=365)).strftime("%Y-%m-%d"),
+                "end_date": end_date or (now + timedelta(days=1)).strftime("%Y-%m-%d"),
+            }
             if context_codes:
                 params["context_codes[]"] = context_codes.split(",")
-            
-            result = await self._fetch_all_pages(
-                "announcements",
-                params=params
-            )
-            
+
+            result = await self._fetch_all_pages("announcements", params=params)
+
             if isinstance(result, dict) and "error" in result:
                 return ToolResult(output=None, error=result["error"])
-            
-            output = "📢 最新公告:\n"
+
+            window = f"{params['start_date']} 至 {params['end_date']}"
+            if not result:
+                # 空结果必须明确说"零条"并给出查询窗口——只渲染一个标题
+                # 会让模型分不清"没有公告"和"工具没干活"，进而重试
+                return ToolResult(
+                    output=(
+                        f"该时间范围（{window}）内没有公告。"
+                        f"如需更早的公告，传 start_date 扩大范围。"
+                    ),
+                    error=None,
+                )
+
+            result.sort(key=lambda a: a.get("posted_at") or "", reverse=True)
+            output = f"📢 共 {len(result)} 条公告（{window}，从新到旧）:\n"
             for announcement in result:
                 output += f"\n标题: {announcement.get('title')}\n"
                 output += f"发布时间: {announcement.get('posted_at', '未知')}\n"
-                output += f"内容: {announcement.get('message', '无内容')[:200]}...\n"
-            
+                output += f"内容: {(announcement.get('message') or '无内容')[:200]}...\n"
+
             return ToolResult(output=output, error=None)
-            
+
         except Exception as e:
             return ToolResult(output=None, error=f"获取公告失败: {str(e)}")
 

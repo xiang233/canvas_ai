@@ -116,6 +116,38 @@ def main() -> int:
     check("同参数不同工具不被短路",
           not would_short_circuit("canvas_get_grades", a))
 
+    # --- 3. 公告工具：默认窗口与空结果渲染 ---
+    # 同一类病的另一处：Canvas /announcements 不传日期只返回最近 14 天，
+    # 结课后的课用默认值永远查不到；且空结果渲染成光秃秃的标题会诱发重试
+    from src.tools.canvas_tools import CanvasGetAnnouncements
+
+    ann = CanvasGetAnnouncements()
+    captured = {}
+
+    async def fake_fetch(endpoint, params=None, max_pages=20):
+        captured.update(params or {})
+        return captured.pop("_ret", [])
+
+    ann._fetch_all_pages = fake_fetch
+
+    out = asyncio.run(ann.forward(context_codes="course_1")).output
+    check("公告默认窗口是一年而非 Canvas 的 14 天",
+          "start_date" in captured and captured["start_date"] < "2026-01-01",
+          str(captured))
+    check("空结果明确说明范围并提示扩大（不是光秃秃的标题）",
+          "没有公告" in out and "start_date" in out, out[:120])
+
+    async def fake_fetch2(endpoint, params=None, max_pages=20):
+        return [
+            {"title": "old", "posted_at": "2025-09-01T00:00:00Z", "message": "m"},
+            {"title": "new", "posted_at": "2025-12-16T00:00:00Z", "message": "m"},
+        ]
+
+    ann._fetch_all_pages = fake_fetch2
+    out2 = asyncio.run(ann.forward()).output
+    check("公告按时间从新到旧排列且带总数",
+          "共 2 条" in out2 and out2.index("new") < out2.index("old"), out2[:150])
+
     passed = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{passed}/{len(RESULTS)} 通过\n")
     return 0 if passed == len(RESULTS) else 1

@@ -49,5 +49,5 @@ jobs:
       - name: Streaming events over SSE and WebSocket (12 cases)
         run: python -m tests.test_streaming
 
-      - name: Tool-call loop protection and include rendering (12 cases)
+      - name: Tool-call loop protection and observation rendering (15 cases)
         run: python -m tests.test_loop_protection
