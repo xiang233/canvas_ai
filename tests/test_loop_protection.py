@@ -49,6 +49,7 @@ SAMPLE_COURSE = {
     "workflow_state": "available",
     "enrollments": [{"computed_current_score": 101.08, "computed_current_grade": "A"}],
     "teachers": [{"id": 1, "display_name": "Chongjie Zhang"}],
+    "total_students": 43,
     "syllabus_body": "<p>Grading: <b>40%</b> homework</p>",
 }
 
@@ -69,6 +70,8 @@ def test_include_rendering():
           "Chongjie Zhang" in out, out[:200])
     check("分数仍然渲染", "101.08" in out, out[:200])
     check("syllabus 去 HTML 后渲染", "40%" in out and "<b>" not in out, out[:200])
+    check("total_students 渲染（schema 宣传的第四个 include，此前是潜伏的渲染丢弃）",
+          "students: 43" in out, out[:200])
     bare = dict(SAMPLE_COURSE, teachers=[], syllabus_body=None)
     out2 = asyncio.run(render(bare))
     check("无 teachers 数据时不输出空字段", "teachers:" not in out2, out2[:200])

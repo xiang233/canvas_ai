@@ -213,8 +213,11 @@ class CanvasListCourses(CanvasAPIBase):
     name = "canvas_list_courses"
     description = (
         "获取当前学生注册的所有课程列表，包括课程名称、ID、状态等信息。"
-        "需要跨多门课比较成绩时，传 include='total_scores' 一次拿回全部分数，"
-        "不要对每门课分别调用 canvas_get_grades。"
+        "按需传 include 拿附加信息："
+        "查教授/教师姓名传 include='teachers'；"
+        "跨多门课比较成绩传 include='total_scores'（不要逐门调 canvas_get_grades）；"
+        "查课程大纲/上课时间地点传 include='syllabus_body'；"
+        "查选课人数传 include='total_students'。"
     )
 
     parameters = {
@@ -271,6 +274,7 @@ class CanvasListCourses(CanvasAPIBase):
                     "enrollments": course.get("enrollments", []),
                     "teachers": course.get("teachers", []),
                     "syllabus_body": course.get("syllabus_body"),
+                    "total_students": course.get("total_students"),
                 }
                 courses_info.append(info)
             
@@ -289,6 +293,8 @@ class CanvasListCourses(CanvasAPIBase):
                     line += f" | current_score: {score}"
                     if grade:
                         line += f" ({grade})"
+                if c.get("total_students") is not None:
+                    line += f" | students: {c['total_students']}"
                 if c.get("teachers"):
                     names = ", ".join(
                         t.get("display_name") or t.get("name") or str(t.get("id"))
