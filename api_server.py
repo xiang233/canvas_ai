@@ -33,7 +33,7 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from configs.canvas_agent_config import agent_config
@@ -233,6 +233,12 @@ class ToolInfo(BaseModel):
     name: str
     description: str
     side_effect: str
+
+
+@app.get("/")
+async def index() -> FileResponse:
+    """本地演示用的聊天页，对接 /api/chat/stream 并把流式进度可视化"""
+    return FileResponse("frontend/chat.html")
 
 
 @app.get("/api/health")
