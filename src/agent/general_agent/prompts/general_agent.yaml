@@ -103,11 +103,16 @@ system_prompt: |-
      - Course logistics (grades, assignments, due dates, submissions,
        announcements): use the Canvas API tools directly. Do not search the
        knowledge base for these.
+  6. If the request is ambiguous - no course named when several could match,
+     or you cannot tell which item the user means - ask ONE short clarifying
+     question via final_answer_tool instead of guessing. Do not ask when the
+     conversation or the data already pins down a single answer.
 
   Now Begin!
 
 task_instruction: |-
   You have one question to answer. It is paramount that you provide a correct answer. Give it all you can, and use the tools available to you.
+  If the question is ambiguous, asking one short clarifying question is a valid final answer.
   If the course materials do not contain the answer, say so explicitly. You may then add relevant general knowledge, but you must clearly mark which parts come from course materials and which come from your own knowledge. Stating that something is not in the materials is a valid and correct answer.
 
   Here is the task:

@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Canvas Student Agent</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* 浅色:暖米白纸感。深色:同色系的暖石板,切换时只翻转明暗,色相不跳 */
+  :root, [data-theme="light"] {
+    --bg:#faf7f3; --surface:#f2ede6; --surface2:#eae3d9; --border:#e2d9cd;
+    --text:#241f1a; --text-mid:#57503f; --dim:#8d8378; --dimmer:#a89e94;
+    --accent:#d3384f; --accent-soft:#fbe9ec; --accent-line:#f2ccd4;
+    --ok:#2e8f63; --ok-soft:#e6f4ec; --ok-line:#b9dfcb;
+    --shadow:0 12px 32px rgba(60,45,35,.14);
+  }
+  [data-theme="dark"] {
+    --bg:#332926; --surface:#3e332f; --surface2:#4c403a; --border:#584b45;
+    --text:#f7f1ed; --text-mid:#ddcdc4; --dim:#c4b3a8; --dimmer:#9c8a7f;
+    --accent:#f0697d; --accent-soft:rgba(240,105,125,.14); --accent-line:rgba(240,105,125,.34);
+    --ok:#88d0a6; --ok-soft:rgba(136,208,166,.15); --ok-line:rgba(136,208,166,.3);
+    --shadow:0 12px 36px rgba(0,0,0,.45);
+  }
+
+  html, body {
+    height:100%; background:var(--bg); color:var(--text);
+    font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont,
+                 "Segoe UI", system-ui, sans-serif;
+    transition: background .25s ease, color .25s ease;
+  }
+  .app { display:grid; grid-template-rows:56px 1fr auto; height:100vh; max-width:880px;
+         margin:0 auto; position:relative; }
+
+  header { display:flex; align-items:center; justify-content:space-between;
+           padding:0 24px; border-bottom:1px solid var(--border); }
+  .logo-text { font-size:14px; font-weight:650; }
+  .logo-sub { font-size:10.5px; color:var(--dim); margin-top:1px; }
+  .head-right { display:flex; align-items:center; gap:10px; }
+  .badge { font-size:9.5px; padding:3.5px 9px; border-radius:20px;
+           background:var(--surface); border:1px solid var(--border); color:var(--dim); }
+  .badge.grounded { background:var(--ok-soft); border-color:var(--ok-line); color:var(--ok); }
+  .theme-btn { width:28px; height:28px; border-radius:8px; border:1px solid var(--border);
+               background:var(--surface); color:var(--dim); cursor:pointer;
+               display:grid; place-items:center; font-size:13px; transition:all .15s; }
+  .theme-btn:hover { color:var(--accent); border-color:var(--accent-line); }
+
+  .messages { overflow-y:auto; padding:28px 24px; display:flex; flex-direction:column; gap:2px; }
+  .messages::-webkit-scrollbar { width:5px; }
+  .messages::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+  .msg { display:flex; gap:12px; padding:10px 0; animation:fadeUp .2s ease; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+  .av { width:27px; height:27px; border-radius:7px; flex-shrink:0; display:grid; place-items:center;
+        font-size:10px; font-weight:600; margin-top:1px; }
+  .msg.user .av { background:var(--surface2); color:var(--text-mid); border:1px solid var(--border); }
+  .msg.ai   .av { background:var(--accent); color:#fff; }
+  .body { flex:1; min-width:0; }
+  .body.grounded    { border-left:2px solid var(--ok-line); padding-left:12px; }
+  .body.ungrounded  { border-left:2px solid var(--border);  padding-left:12px; }
+  .role { font-size:9.5px; letter-spacing:.05em; text-transform:uppercase;
+          color:var(--dim); margin-bottom:6px; }
+  .text { font-size:14px; line-height:1.62; white-space:pre-wrap; word-break:break-word; }
+  .msg.user .text { color:var(--text-mid); }
+  .src { font-size:10px; margin-top:8px; color:var(--ok); }
+  .src.none { color:var(--dim); }
+
+  .trace { display:flex; flex-direction:column; gap:5px; margin-bottom:9px; }
+  .trace:empty { display:none; }
+  .pill { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px;
+          background:var(--ok-soft); color:var(--ok); border:1px solid var(--ok-line);
+          border-radius:6px; padding:3.5px 9px; display:flex; align-items:center; gap:7px;
+          width:fit-content; animation:fadeUp .18s ease; }
+  .pill.err { background:var(--accent-soft); color:var(--accent); border-color:var(--accent-line); }
+  .pill .dur { color:var(--dimmer); }
+  .spinner { width:9px; height:9px; border:1.5px solid var(--ok-line); border-top-color:transparent;
+             border-radius:50%; animation:spin .7s linear infinite; flex:none; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .dots { display:inline-flex; gap:4px; align-items:center; padding:4px 0; }
+  .dots span { width:5px; height:5px; border-radius:50%; background:var(--dimmer); animation:bounce 1.2s infinite; }
+  .dots span:nth-child(2) { animation-delay:.2s; } .dots span:nth-child(3) { animation-delay:.4s; }
+  @keyframes bounce { 0%,60%,100% { transform:none; } 30% { transform:translateY(-5px); } }
+
+  .empty { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+           gap:8px; color:var(--dim); text-align:center; padding:40px; }
+  .empty-icon { font-size:34px; margin-bottom:6px; }
+  .empty h2 { font-size:16px; font-weight:600; color:var(--text-mid); }
+  .empty p { font-size:13px; line-height:1.55; max-width:350px; }
+  .suggestions { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; justify-content:center; }
+  .suggestion { font-size:12px; padding:7px 14px; border:1px solid var(--border); border-radius:20px;
+                background:var(--surface); color:var(--dim); cursor:pointer; transition:all .15s; }
+  .suggestion:hover { border-color:var(--accent-line); color:var(--accent); background:var(--accent-soft); }
+
+  .inbar { padding:0 24px 20px; position:relative; }
+  .inwrap { background:var(--surface); border:1px solid var(--border); border-radius:13px;
+            padding:12px 14px 10px; transition:border-color .15s; }
+  .inwrap:focus-within { border-color:var(--accent-line); }
+  textarea { width:100%; background:transparent; border:none; outline:none; color:var(--text);
+             font-family:inherit; font-size:14px; line-height:1.5; resize:none;
+             min-height:24px; max-height:130px; margin-bottom:11px; }
+  textarea::placeholder { color:var(--dim); }
+
+  .ctrl { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .ctrl-left { display:flex; align-items:center; gap:9px; }
+  .chip { font-size:11px; padding:4.5px 11px; border-radius:16px; cursor:pointer;
+          background:var(--accent-soft); border:1px solid var(--accent-line); color:var(--accent);
+          display:flex; align-items:center; gap:5px; white-space:nowrap; }
+  .glabel { font-size:10px; color:var(--dim); }
+  .seg { display:flex; border-radius:16px; padding:2px; gap:2px;
+         background:var(--surface2); border:1px solid var(--border); }
+  .seg button { font-size:10.5px; padding:4px 11px; border-radius:14px; border:none;
+                background:transparent; color:var(--text-mid); cursor:pointer;
+                font-family:inherit; transition:all .15s; }
+  .seg button.on { background:var(--accent); color:#fff; }
+  .seg button.on.ok { background:var(--ok); color:#fff; }
+  .sendb { width:30px; height:30px; border-radius:9px; border:none; background:var(--accent);
+           color:#fff; display:grid; place-items:center; cursor:pointer; flex-shrink:0; transition:all .15s; }
+  .sendb:disabled { opacity:.35; cursor:default; }
+  .sendb:not(:disabled):hover { transform:scale(1.06); }
+
+  /* 课程下拉 */
+  .menu { position:absolute; bottom:74px; left:24px; width:352px; border-radius:13px;
+          background:var(--bg); border:1px solid var(--border); box-shadow:var(--shadow);
+          overflow:hidden; z-index:20; display:none; animation:fadeUp .16s ease; }
+  .menu.open { display:block; }
+  .menu-head { font-size:9.5px; letter-spacing:.06em; text-transform:uppercase;
+               color:var(--dim); padding:10px 14px 8px; border-bottom:1px solid var(--border); }
+  .menu-list { max-height:270px; overflow-y:auto; padding:5px 0; }
+  .menu-list::-webkit-scrollbar { width:4px; }
+  .menu-list::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+  .item { display:flex; align-items:center; justify-content:space-between; gap:8px;
+          padding:7.5px 14px; font-size:11.5px; cursor:pointer; color:var(--text); }
+  .item:hover { background:var(--surface); }
+  .item.on { background:var(--accent-soft); color:var(--accent); }
+  .item .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .kb { font-size:8.5px; padding:2px 6px; border-radius:10px; flex-shrink:0;
+        font-family:ui-monospace,monospace; background:var(--ok-soft); color:var(--ok); }
+  .menu-sep { height:1px; background:var(--border); margin:5px 0; }
+  .hint { font-size:10.5px; color:var(--dimmer); text-align:center; margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <div class="logo-text">Canvas Student Agent</div>
+      <div class="logo-sub">ReAct · 23 read-only tools · per-session memory · SSE streaming</div>
+    </div>
+    <div class="head-right">
+      <span class="badge" id="badge">no session</span>
+      <button class="theme-btn" id="themeBtn" title="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <div class="messages" id="messages">
+    <div class="empty" id="empty">
+      <div class="empty-icon">🎓</div>
+      <h2>Canvas Student Agent</h2>
+      <p>Ask about courses, grades, deadlines and announcements, or search the
+         lecture material in your course knowledge base.</p>
+      <div class="suggestions">
+        <div class="suggestion" onclick="suggest(this)">What are my current grades?</div>
+        <div class="suggestion" onclick="suggest(this)">Who teaches the Deep Reinforcement Learning course?</div>
+        <div class="suggestion" onclick="suggest(this)">What is the latest announcement in Deep RL?</div>
+        <div class="suggestion" onclick="suggest(this)">What does the course material say about expectation maximization?</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 课程选择器。列表目前是静态样例：选择只切 UI 状态，
+       请求体已预留 course_id 字段，接后端时无需改动前端结构 -->
+  <div class="menu" id="menu">
+    <div class="menu-head">Scope to a course</div>
+    <div class="menu-list" id="menuList"></div>
+  </div>
+
+  <div class="inbar">
+    <div class="inwrap">
+      <textarea id="input" rows="1" placeholder="Ask about courses, grades, deadlines, or lecture content…"
+                onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <div class="ctrl">
+        <div class="ctrl-left">
+          <div class="chip" id="courseChip" onclick="toggleMenu(event)">📚 <span id="courseLabel">All courses</span> <span id="caret">▾</span></div>
+          <span class="glabel">Grounding</span>
+          <div class="seg">
+            <button id="segDefault" class="on" onclick="setGrounding('default')">Default</button>
+            <button id="segStrict" onclick="setGrounding('course_only')">Course-only</button>
+          </div>
+        </div>
+        <button class="sendb" id="sendBtn" onclick="onSendClick()" disabled aria-label="Send">
+          <svg id="iconSend" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline>
+          </svg>
+          <svg id="iconStop" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" hidden>
+            <rect x="5" y="5" width="14" height="14" rx="2.5"></rect>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="hint">Enter to send · Shift+Enter for newline</div>
+  </div>
+</div>
+
+<script>
+/* ── 静态样例数据。真实接入时改为 GET /api/courses ── */
+const COURSES = [
+  { id: "155135", code: "CSE 5807", name: "Algorithms for Computational Biology", kb: 77 },
+  { id: "155084", code: "CSE 5100", name: "Deep Reinforcement Learning" },
+  { id: "154630", code: "CSE 4402", name: "Introduction to Cryptography" },
+  { id: "154205", code: "CSE 3407", name: "Analysis of Algorithms" },
+  { id: "155097", code: "CSE 5205", name: "Computation in Economics & Social Choice" },
+  { id: "165830", code: "CSE 5106", name: "Multi-Agent Systems" },
+  { id: "165823", code: "CSE 5103", name: "Theory of AI and Machine Learning" },
+  { id: "165865", code: "CSE 5401", name: "Advanced Algorithms" },
+  { id: "165851", code: "CSE 5203", name: "Systems Security" },
+  { id: "172208", code: "CSE 4107", name: "Introduction to Machine Learning" },
+  { id: "162611", code: "PHIL 2090", name: "Introduction to Aesthetics" },
+];
+
+const messages = document.getElementById("messages");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("sendBtn");
+const badge = document.getElementById("badge");
+const menu = document.getElementById("menu");
+let sessionId = null, busy = false, turns = 0, controller = null;
+let courseId = null, grounding = "default";
+
+/* ── 主题 ── */
+const themeBtn = document.getElementById("themeBtn");
+themeBtn.onclick = () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  themeBtn.textContent = next === "dark" ? "◑" : "◐";
+  try { localStorage.setItem("theme", next); } catch (e) {}
+};
+try {
+  const saved = localStorage.getItem("theme");
+  if (saved) { document.documentElement.dataset.theme = saved;
+               themeBtn.textContent = saved === "dark" ? "◑" : "◐"; }
+} catch (e) {}
+
+/* ── 课程选择器 ── */
+function renderMenu() {
+  const list = document.getElementById("menuList");
+  list.innerHTML =
+    '<div class="item' + (courseId === null ? " on" : "") + '" onclick="pickCourse(null)">' +
+      '<span class="nm">' + (courseId === null ? "✓ " : "") + "All courses</span></div>" +
+    '<div class="menu-sep"></div>' +
+    COURSES.map(c =>
+      '<div class="item' + (courseId === c.id ? " on" : "") + '" onclick="pickCourse(\'' + c.id + '\')">' +
+        '<span class="nm">' + (courseId === c.id ? "✓ " : "") + c.code + " · " + c.name + "</span>" +
+        (c.kb ? '<span class="kb">KB ' + c.kb + "</span>" : "") +
+      "</div>").join("");
+}
+function toggleMenu(e) { e.stopPropagation(); menu.classList.toggle("open");
+  document.getElementById("caret").textContent = menu.classList.contains("open") ? "▴" : "▾"; }
+function pickCourse(id) {
+  courseId = id;
+  const c = COURSES.find(x => x.id === id);
+  document.getElementById("courseLabel").textContent = c ? c.code : "All courses";
+  renderMenu(); menu.classList.remove("open");
+  document.getElementById("caret").textContent = "▾";
+}
+document.addEventListener("click", e => {
+  if (!menu.contains(e.target) && !document.getElementById("courseChip").contains(e.target)) {
+    menu.classList.remove("open"); document.getElementById("caret").textContent = "▾";
+  }
+});
+renderMenu();
+
+/* ── Grounding：目前只切 UI 状态，请求体已带上该字段 ── */
+function setGrounding(mode) {
+  grounding = mode;
+  const d = document.getElementById("segDefault"), s = document.getElementById("segStrict");
+  d.className = mode === "default" ? "on" : "";
+  s.className = mode === "course_only" ? "on ok" : "";
+  if (!sessionId) badge.textContent = mode === "course_only" ? "◆ course-only" : "no session";
+  badge.className = "badge" + (mode === "course_only" ? " grounded" : "");
+}
+
+function autoResize(t) { t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 130) + "px"; }
+function handleKey(e) {
+  // 输入法组合期间的 Enter 是"确认候选字"，不是"发送"。isComposing 覆盖
+  // 现代浏览器；keyCode 229 是老浏览器在组合期统一上报的值。
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+}
+function suggest(el) { input.value = el.textContent.trim(); autoResize(input); sendBtn.disabled = false; send(); }
+function scroll() { messages.scrollTop = messages.scrollHeight; }
+
+function onSendClick() { busy ? stop() : send(); }
+
+function stop() {
+  // 中止 fetch：SSE 读取循环随之退出，服务端在客户端断开时取消该次生成
+  if (controller) controller.abort();
+}
+
+function setBusy(on) {
+  busy = on;
+  document.getElementById("iconSend").hidden = on;
+  document.getElementById("iconStop").hidden = !on;
+  sendBtn.setAttribute("aria-label", on ? "Stop" : "Send");
+  sendBtn.disabled = on ? false : !input.value.trim();
+}
+input.addEventListener("input", () => { if (!busy) sendBtn.disabled = !input.value.trim(); });
+
+function addMsg(role, text) {
+  const el = document.createElement("div");
+  el.className = "msg " + role;
+  el.innerHTML = '<div class="av">' + (role === "user" ? "You" : "AI") + "</div>" +
+    '<div class="body"><div class="role">' + (role === "user" ? "You" : "Agent") + "</div>" +
+    (role === "ai" ? '<div class="trace"></div>' : "") + '<div class="text"></div></div>';
+  el.querySelector(".text").textContent = text || "";
+  messages.appendChild(el); scroll();
+  return el;
+}
+
+async function send() {
+  const q = input.value.trim();
+  if (!q || busy) return;
+  setBusy(true); input.value = ""; autoResize(input);
+  document.getElementById("empty")?.remove();
+  controller = new AbortController();
+
+  addMsg("user", q);
+  const ai = addMsg("ai", "");
+  const trace = ai.querySelector(".trace"), body = ai.querySelector(".body"), text = ai.querySelector(".text");
+  text.innerHTML = '<div class="dots"><span></span><span></span><span></span></div>';
+  let started = false, active = [], sawRetrieval = false;
+
+  try {
+    const res = await fetch("/api/chat/stream", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      // course_id / grounding 已随请求发出，后端接上逻辑即可生效
+      body: JSON.stringify({ message: q, session_id: sessionId, course_id: courseId, grounding }),
+      signal: controller.signal,
+    });
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+        const line = frame.split("\n").find(l => l.startsWith("data: "));
+        if (line) handle(JSON.parse(line.slice(6)));
+      }
+    }
+  } catch (err) {
+    if (err.name === "AbortError") {
+      // 用户主动停止：保留已流出的内容，标注中断而不是报错
+      if (!started) text.textContent = "";
+      const note = document.createElement("div");
+      note.className = "src none";
+      note.textContent = "○ stopped";
+      body.appendChild(note);
+    } else {
+      text.textContent = "Connection error: " + err.message;
+    }
+  }
+
+  function handle(ev) {
+    if (ev.type === "session") {
+      sessionId = ev.session_id;
+      badge.textContent = (grounding === "course_only" ? "◆ " : "") + sessionId.slice(0, 8) + " · turn " + (++turns);
+    } else if (ev.type === "tool_call") {
+      if (ev.tool.startsWith("vector_store")) sawRetrieval = true;
+      const p = document.createElement("div");
+      p.className = "pill";
+      p.innerHTML = '<span class="spinner"></span><span>' + ev.tool + "</span>";
+      trace.appendChild(p); active.push(p); scroll();
+    } else if (ev.type === "step") {
+      active.forEach(p => { p.querySelector(".spinner")?.remove(); p.insertAdjacentHTML("afterbegin", "✓&nbsp;"); });
+      if (active.length && ev.duration_s != null)
+        active[active.length - 1].insertAdjacentHTML("beforeend", '<span class="dur">' + ev.duration_s + "s</span>");
+      active = [];
+    } else if (ev.type === "answer_chunk") {
+      if (!started) { text.textContent = ""; started = true; }
+      text.textContent += ev.text; scroll();
+    } else if (ev.type === "error") {
+      const p = document.createElement("div");
+      p.className = "pill err"; p.textContent = "⚠ " + ev.message.slice(0, 140);
+      trace.appendChild(p); scroll();
+    } else if (ev.type === "done") {
+      if (!started) text.textContent = "(no answer returned)";
+      // Course-only 下标注这条回答是否落在课程材料上
+      if (grounding === "course_only") {
+        const src = document.createElement("div");
+        if (sawRetrieval) { body.classList.add("grounded"); src.className = "src";
+                            src.textContent = "◆ grounded in course materials"; }
+        else { body.classList.add("ungrounded"); src.className = "src none";
+               src.textContent = "○ not in course materials"; }
+        body.appendChild(src);
+      }
+      scroll();
+    }
+  }
+  controller = null; setBusy(false); input.focus(); scroll();
+}
+</script>
+</body>
+</html>

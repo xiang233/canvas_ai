@@ -106,6 +106,23 @@ def main() -> int:
     check("写工具经过构建过滤后被丢弃（取消注释也进不来）", survived == [],
           f"过滤后仍存活: {[t.name for t in survived]}")
 
+    # 8. MCP server 与 agent 工具集同源（mcp 未安装时跳过 —— CI 最小依赖不含它）
+    try:
+        import mcp  # noqa: F401
+        has_mcp = True
+    except ImportError:
+        has_mcp = False
+    if has_mcp:
+        import asyncio
+
+        from mcp_server import build_server
+
+        exposed = {t.name for t in asyncio.run(build_server().list_tools())}
+        check("MCP server 暴露的工具与 agent 启用集一致", exposed == enabled,
+              f"差异: +{sorted(exposed - enabled)} -{sorted(enabled - exposed)}")
+    else:
+        print("  SKIP  MCP server 一致性（mcp 未安装，本地跑 pip install mcp 后覆盖）")
+
     passed = sum(1 for _, ok in RESULTS if ok)
     print(f"\n{passed}/{len(RESULTS)} 通过\n")
     return 0 if passed == len(RESULTS) else 1
