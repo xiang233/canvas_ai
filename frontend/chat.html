@@ -187,10 +187,13 @@
             <button id="segStrict" onclick="setGrounding('course_only')">Course-only</button>
           </div>
         </div>
-        <button class="sendb" id="sendBtn" onclick="send()" disabled aria-label="Send">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        <button class="sendb" id="sendBtn" onclick="onSendClick()" disabled aria-label="Send">
+          <svg id="iconSend" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline>
+          </svg>
+          <svg id="iconStop" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" hidden>
+            <rect x="5" y="5" width="14" height="14" rx="2.5"></rect>
           </svg>
         </button>
       </div>
@@ -220,7 +223,7 @@ const input = document.getElementById("input");
 const sendBtn = document.getElementById("sendBtn");
 const badge = document.getElementById("badge");
 const menu = document.getElementById("menu");
-let sessionId = null, busy = false, turns = 0;
+let sessionId = null, busy = false, turns = 0, controller = null;
 let courseId = null, grounding = "default";
 
 /* ── 主题 ── */
@@ -277,10 +280,30 @@ function setGrounding(mode) {
 }
 
 function autoResize(t) { t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 130) + "px"; }
-function handleKey(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }
+function handleKey(e) {
+  // 输入法组合期间的 Enter 是"确认候选字"，不是"发送"。isComposing 覆盖
+  // 现代浏览器；keyCode 229 是老浏览器在组合期统一上报的值。
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+}
 function suggest(el) { input.value = el.textContent.trim(); autoResize(input); sendBtn.disabled = false; send(); }
 function scroll() { messages.scrollTop = messages.scrollHeight; }
-input.addEventListener("input", () => { sendBtn.disabled = !input.value.trim() || busy; });
+
+function onSendClick() { busy ? stop() : send(); }
+
+function stop() {
+  // 中止 fetch：SSE 读取循环随之退出，服务端在客户端断开时取消该次生成
+  if (controller) controller.abort();
+}
+
+function setBusy(on) {
+  busy = on;
+  document.getElementById("iconSend").hidden = on;
+  document.getElementById("iconStop").hidden = !on;
+  sendBtn.setAttribute("aria-label", on ? "Stop" : "Send");
+  sendBtn.disabled = on ? false : !input.value.trim();
+}
+input.addEventListener("input", () => { if (!busy) sendBtn.disabled = !input.value.trim(); });
 
 function addMsg(role, text) {
   const el = document.createElement("div");
@@ -296,8 +319,9 @@ function addMsg(role, text) {
 async function send() {
   const q = input.value.trim();
   if (!q || busy) return;
-  busy = true; sendBtn.disabled = true; input.value = ""; autoResize(input);
+  setBusy(true); input.value = ""; autoResize(input);
   document.getElementById("empty")?.remove();
+  controller = new AbortController();
 
   addMsg("user", q);
   const ai = addMsg("ai", "");
@@ -310,6 +334,7 @@ async function send() {
       method: "POST", headers: { "Content-Type": "application/json" },
       // course_id / grounding 已随请求发出，后端接上逻辑即可生效
       body: JSON.stringify({ message: q, session_id: sessionId, course_id: courseId, grounding }),
+      signal: controller.signal,
     });
     const reader = res.body.getReader(), dec = new TextDecoder();
     let buf = "";
@@ -325,7 +350,16 @@ async function send() {
       }
     }
   } catch (err) {
-    text.textContent = "Connection error: " + err.message;
+    if (err.name === "AbortError") {
+      // 用户主动停止：保留已流出的内容，标注中断而不是报错
+      if (!started) text.textContent = "";
+      const note = document.createElement("div");
+      note.className = "src none";
+      note.textContent = "○ stopped";
+      body.appendChild(note);
+    } else {
+      text.textContent = "Connection error: " + err.message;
+    }
   }
 
   function handle(ev) {
@@ -364,7 +398,7 @@ async function send() {
       scroll();
     }
   }
-  busy = false; sendBtn.disabled = !input.value.trim(); input.focus(); scroll();
+  controller = null; setBusy(false); input.focus(); scroll();
 }
 </script>
 </body>
